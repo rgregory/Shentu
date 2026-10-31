@@ -158,9 +158,10 @@ struct DropZone: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "shippingbox")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
+            // The app's own icon (assets/AppIcon.png, from icon.jpg).
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .frame(width: 72, height: 72)
             Text("Drop a Mac app here").font(.title3)
             Text("You choose what it can reach, then it opens in a sandbox.")
                 .font(.callout).foregroundStyle(.secondary)
