@@ -20,8 +20,8 @@
 - The file checkboxes follow Finder's Kind menu: Archive, Document, Image, Movie, Music, PDF, Presentation, Text, in two columns. Hovering one shows its extensions. They're defined in `ShentuCore/Kinds.swift` by UTType conformance. Code, scripts and `.key`/`.ts` are never included (`kindsMatchFinder`).
 
 ### Removed
-- Code carried over from Menshen that Shentu never runs: learning runs, config-based enforce, app swapping, the app library and access summaries (`Activity`, `Library`, `Summary`, `Swap`, and `Learn`/`Enforce.run` in `Modes`). `Enforce.runRestricted` is the only launch path.
-- The rest of Menshen's learned-rule machinery: saved configs and rules (`Config`), rule learning (`Generalizer`), file categories (`Categories`), and the config compiler in `SBPLCompiler`. The Restricted profile now renders from a small internal rule type, with the same output as before.
+- Carried-over code Shentu never runs: learning runs, config-based enforce, app swapping, the app library and access summaries (`Activity`, `Library`, `Summary`, `Swap`, and `Learn`/`Enforce.run` in `Modes`). `Enforce.runRestricted` is the only launch path.
+- The rest of the carried-over learned-rule machinery: saved configs and rules (`Config`), rule learning (`Generalizer`), file categories (`Categories`), and the config compiler in `SBPLCompiler`. The Restricted profile now renders from a small internal rule type, with the same output as before.
 
 ## [0.1.0] — 2026-10-31
 
