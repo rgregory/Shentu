@@ -8,6 +8,8 @@ public struct EnforceOptions: Sendable {
     public var control = SessionControl(forwardSignals: true)
     /// Every logged record, as it arrives (for live UIs). Called on a background queue.
     public var onRecord: (@Sendable (EnforceRecord) -> Void)?
+    /// The target's pid, once it has been started (the log is live by then).
+    public var onLaunch: (@Sendable (pid_t) -> Void)?
 
     public init(target: String) { self.target = target }
 }
@@ -84,6 +86,7 @@ public enum Enforce {
         let result = try Session.run(
             profile: profileURL, target: target, arguments: options.arguments,
             duration: options.duration, environment: environment, control: control,
+            onLaunch: options.onLaunch,
             onEvent: { event in
                 let record = EnforceRecord(
                     ts: Date(), runId: runId, pid: event.pid, process: event.process,

@@ -322,6 +322,7 @@ import Testing
         let summary = try Enforce.runRestricted(options, sandbox: RestrictedSandbox(readWrite: [out], ephemeralTemp: true),
                                                 environment: env())
         #expect(summary.outcome.stoppedByShentu)
+        #expect(RunEnd(summary.outcome) == .stopped)
         #expect(Date().timeIntervalSince(start) < 30, "stopped, not waited out")
         let helper = try helperPID(pidfile)
         #expect(gone(helper), "the helper was stopped too")
@@ -340,6 +341,106 @@ import Testing
         #expect(summary.outcome.status == 0)
         let helper = try helperPID(pidfile)
         #expect(gone(helper), "the helper ended with the app")
+    }
+
+    /// The output folder: the one place it writes that survives the run. Readable too, and
+    /// the sanity set still applies inside it.
+    @Test func outputFolderKeepsItsWork() throws {
+        let out = home + "/Out"
+        try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
+        let choice = LaunchChoice(outputFolder: out)
+        let p = try profile(choice)
+        #expect(try can(p, "write", out + "/result.txt"), "writes in the output folder")
+        #expect(try can(p, "read", out + "/result.txt"), "and reads it back")
+        #expect(try !can(p, "write", home + "/Documents/new.txt"), "nowhere else in home")
+        #expect(try !can(p, "write", out + "/.env"), "the sanity set still applies inside it")
+        #expect(try !can(try without("(allow file-write* (subpath \"\(out)\"))", p), "write", out + "/again.txt"),
+                "mutation: the folder's rule is what allows it")
+
+        let run = try Shentu.launch(app, choice, environment: env(), arguments: ["write", out + "/kept.txt"])
+        #expect(RunEnd(run.outcome) == .quit)
+        #expect(FileManager.default.fileExists(atPath: out + "/kept.txt"), "kept after the app quit")
+    }
+
+    /// "Only these": just the picked files and folders, read-only; file kinds don't count.
+    @Test func onlyThePickedItems() throws {
+        let choice = LaunchChoice(kinds: [.movie], mode: .items,
+                                  readPaths: [home + "/Documents/private.txt", home + "/Pictures"])
+        let p = try profile(choice)
+        #expect(try can(p, "read", home + "/Documents/private.txt"), "a picked file")
+        #expect(try can(p, "read", home + "/Pictures/photo.jpg"), "inside a picked folder")
+        #expect(try !can(p, "read", home + "/Movies/clip.mp4"), "file kinds are off in this mode")
+        #expect(try !can(p, "write", home + "/Pictures/new.jpg"), "read-only")
+        #expect(try !can(try without("\n    (subpath \"\(home)/Pictures\")", p), "read", home + "/Pictures/photo.jpg"),
+                "mutation: the folder's rule is what allows it")
+    }
+
+    /// What can be picked: something inside home or on a drive, never home, a drive, ~/Library,
+    /// or a protected place. Checked again at launch.
+    @Test func picksAreChecked() throws {
+        let fm = FileManager.default
+        for d in ["/Library/Foo", "/.ssh", "/Out"] { try fm.createDirectory(atPath: home + d, withIntermediateDirectories: true) }
+        try fm.createDirectory(atPath: drive + "/sub", withIntermediateDirectories: true)
+        func problem(_ path: String) -> String? { LaunchChoice.problem(with: path, environment: env()) }
+        #expect(problem(home + "/Out") == nil)
+        #expect(problem(home + "/Documents/private.txt") == nil)
+        #expect(problem(drive + "/sub") == nil)
+        for bad in ["/", home, home + "/Library", home + "/Library/Foo", home + "/.ssh", "/Applications", drive,
+                    home + "/missing"] {
+            #expect(problem(bad) != nil, "\(bad)")
+        }
+        #expect(throws: (any Error).self, "a bad remembered folder is refused at launch") {
+            try Shentu.launch(app, LaunchChoice(outputFolder: home), environment: env(), arguments: [])
+        }
+    }
+
+    /// How a run ended: quit, an error exit, a crash; and the app's start is reported.
+    @Test func runEnds() throws {
+        let started = Results()
+        let ok = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["tmp"],
+                                   onLaunch: { _ in started.add(true, nil) })
+        #expect(RunEnd(ok.outcome) == .quit)
+        #expect(started.all.count == 1, "onLaunch was called")
+        let failed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["write", dir + "/outside.txt"])
+        #expect(RunEnd(failed.outcome) == .exited(1))
+        #expect(RunEnd(failed.outcome).isProblem)
+        let crashed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["crash"])
+        #expect(RunEnd(crashed.outcome) == .crashed(SIGABRT))
+        #expect(RunEnd(crashed.outcome).title.contains("SIGABRT"))
+
+        // The blocked write shows up in the activity log, under Files.
+        let activity = ActivityLog.load(failed.logURL)
+        let item = try #require(activity.items.first { $0.target.hasSuffix("outside.txt") })
+        #expect(item.group == .files && item.operation.hasPrefix("file-write"))
+    }
+
+    /// Grouping, counting, search and CSV export of blocked requests.
+    @Test func activityLog() {
+        func record(_ op: String, _ target: String, _ verdict: Verdict = .deny, count: Int = 1, process: String = "App") -> EnforceRecord {
+            EnforceRecord(ts: Date(), runId: "r", pid: 1, process: process, verdict: verdict, operation: op,
+                          target: target, category: "denied", count: count)
+        }
+        var log = ActivityLog()
+        log.add(record("file-read-data", "~/Documents/a.txt"))
+        log.add(record("file-read-data", "~/Documents/a.txt", count: 3, process: "Helper"))
+        log.add(record("network-outbound", "1.2.3.4:443"))
+        log.add(record("mach-lookup", "com.example.service"))
+        log.add(record("process-exec*", "/bin/sh"))
+        log.add(record("file-read-data", "~/x", .allow))
+        #expect(log.items.count == 4, "allowed reports are ignored; repeats merge")
+        #expect(log.total() == 7 && log.total(.files) == 4 && log.total(.network) == 1)
+        #expect(log.total(.services) == 1 && log.total(.programs) == 1)
+        let a = log.items.first { $0.target == "~/Documents/a.txt" }
+        #expect(a?.processes == ["App", "Helper"])
+        #expect(log.items(in: nil, matching: "DOCUMENTS").count == 1, "search ignores case")
+        #expect(log.items(in: .network, matching: "").count == 1)
+        #expect(log.items(in: nil, matching: "helper").count == 1, "search covers processes")
+        #expect(log.items(in: nil, matching: "").first?.count == 4, "most frequent first")
+
+        let csv = ActivityLog.csv([ActivityItem(group: .files, operation: "file-read-data", target: "=cmd \"x\"", count: 2,
+                                                processes: ["App"], first: Date(), last: Date())])
+        #expect(csv.hasPrefix("group,operation,target,count,processes,first,last\n"))
+        #expect(csv.contains("\"'=cmd \"\"x\"\"\""), "quoted, quotes doubled, formula defused: \(csv)")
     }
 
     /// Finder's kinds as macOS classifies them here, and none lets code or private keys through.

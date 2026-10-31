@@ -32,6 +32,7 @@ public enum Session {
         duration: TimeInterval?,
         environment: ShentuEnvironment,
         control: SessionControl = SessionControl(),
+        onLaunch: (@Sendable (pid_t) -> Void)? = nil,
         onEvent: @escaping @Sendable (SandboxEvent) -> Void = { _ in }
     ) throws -> Result {
         let collector = Collector(onEvent: onEvent)
@@ -49,7 +50,10 @@ public enum Session {
             stop: control.stop,
             launch: control.launch,
             members: { collector.trackedPIDs },
-            onLaunch: { collector.attach(ProcessTree(root: $0)) },
+            onLaunch: { pid in
+                collector.attach(ProcessTree(root: pid))
+                onLaunch?(pid)
+            },
             tick: { collector.refresh() }
         )
         let drained = tap.drain()

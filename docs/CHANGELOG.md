@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- Output folder: one folder the app can read and change, so its work survives the run, with a warning that it can modify or delete anything there. Inside home or on a drive only; never home itself, a whole drive, ~/Library or a protected place, checked when picked and again at launch (`outputFolderKeepsItsWork`, `picksAreChecked`).
+- "Only these" files and folders as the alternative to file kinds: read-only access to exactly what you pick (`onlyThePickedItems`).
+- Run states: Starting, Running, Quit, Quit with an error (exit code), Crashed (signal), Stopped, Launch failed. A run whose log may be missing reports (system log dropped messages, or the closing check never arrived) says so (`runEnds`).
+- Activity viewer instead of Show Log in Finder: blocked requests grouped into Files, Network, Programs and Services, with counts, search across paths, addresses, services and processes, and CSV export (formula characters defused) (`activityLog`).
 - Read & Write per file kind: each kind in the pop-up is Off, Read or Read & Write. Read & Write lets the app create, change, rename and delete files of that kind in your home folder and on drives, nowhere else, and never in the sanity set (`writesOnlyTheChosenKinds`). Remembered choices from before load unchanged.
 
 ### Security
