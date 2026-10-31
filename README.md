@@ -16,7 +16,7 @@ Your choices are remembered per app. What the app was blocked from is logged; Sh
 
 ## How it works
 
-Shentu has no sandbox logic of its own. Profiles, the launch and the deny log come from **MenshenCore** (`../menshen`, the Restricted Sandbox; see Menshen's ADR-010), so the two apps can't drift. Shentu maps the pop-up to a `RestrictedSandbox` (`Sources/ShentuCore/Launch.swift`) and calls `Enforce.runRestricted`.
+Shentu is standalone: everything it needs is in this folder. Profiles, the launch and the deny log come from **MenshenCore**, Menshen's sandboxing library. It's copied unmodified into `Sources/MenshenCore`; `VENDORED.md` there records the source commit and how to check for drift. Shentu's own code maps the pop-up to a `RestrictedSandbox` (`Sources/ShentuCore/Launch.swift`) and calls `Enforce.runRestricted`.
 
 Shentu's data lives apart from Menshen's: `~/Library/Application Support/Shentu` (profiles, remembered choices) and `~/Library/Logs/Shentu`.
 
@@ -26,11 +26,7 @@ Shentu's data lives apart from Menshen's: `~/Library/Application Support/Shentu`
 ./scripts/build-app.sh
 ```
 
-This builds `build/Shentu.app` against `../menshen`. To build against another Menshen checkout (a worktree whose changes aren't merged yet), set `MENSHEN_PATH`:
-
-```bash
-MENSHEN_PATH=<another menshen checkout> ./scripts/build-app.sh
-```
+This builds `build/Shentu.app`. Nothing outside this folder is needed.
 
 The icon is `assets/AppIcon.png`, made once from `icon.jpg` by `scripts/make-icon.swift`, which removes the checkerboard painted into the JPEG.
 

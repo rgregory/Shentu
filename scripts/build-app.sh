@@ -1,6 +1,6 @@
 #!/bin/sh
-# Builds build/Shentu.app from the Swift package (no Xcode needed). MenshenCore comes from
-# ../menshen, or from MENSHEN_PATH (see Package.swift).
+# Builds build/Shentu.app from the Swift package (no Xcode needed). Standalone: nothing
+# outside this folder is used.
 set -eu
 cd "$(dirname "$0")/.."
 
