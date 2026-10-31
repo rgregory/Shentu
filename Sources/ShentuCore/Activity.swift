@@ -83,15 +83,59 @@ public struct ActivityItem: Identifiable, Equatable, Sendable {
     public var last: Date
 }
 
+/// Blocked requests over time, in quarter-second buckets per group, for the heart-monitor
+/// view. Keeps the last two minutes.
+public struct Pulse: Equatable, Sendable {
+    public static let bucket: TimeInterval = 0.25
+    static let keep: Int64 = 480
+    private var counts: [Int64: [ActivityGroup: Int]] = [:]
+    private var newest: Int64?
+
+    public init() {}
+
+    /// The bucket a moment falls in.
+    public static func index(_ date: Date) -> Int64 {
+        Int64((date.timeIntervalSinceReferenceDate / bucket).rounded(.down))
+    }
+
+    public mutating func add(_ group: ActivityGroup, at date: Date, count: Int) {
+        let i = Self.index(date)
+        if let newest, i <= newest - Self.keep { return }
+        counts[i, default: [:]][group, default: 0] += count
+        if newest == nil || i > newest! {
+            newest = i
+            if counts.count > Int(Self.keep) * 2 { counts = counts.filter { $0.key > i - Self.keep } }
+        }
+    }
+
+    /// Blocked requests in bucket `i`, for one group or all (nil).
+    public func count(_ group: ActivityGroup?, _ i: Int64) -> Int {
+        guard let bucket = counts[i] else { return 0 }
+        if let group { return bucket[group] ?? 0 }
+        return bucket.values.reduce(0, +)
+    }
+
+    /// Blocked requests in the second up to `end`.
+    public func rate(_ group: ActivityGroup?, at end: Date) -> Int {
+        let last = Self.index(end)
+        return (last - 3...last).reduce(0) { $0 + count(group, $1) }
+    }
+
+    /// Buckets with anything in them (for tests).
+    var filled: Int { counts.count }
+}
+
 /// The blocked requests of one run, grouped and counted. Allowed reports are ignored.
 public struct ActivityLog: Equatable, Sendable {
     public private(set) var items: [ActivityItem] = []
+    public private(set) var pulse = Pulse()
     private var index: [String: Int] = [:]
 
     public init() {}
 
     public mutating func add(_ record: EnforceRecord) {
         guard record.verdict == .deny else { return }
+        pulse.add(ActivityGroup.of(record.operation), at: record.ts, count: record.count)
         let key = "\(record.operation) \(record.target)"
         if let i = index[key] {
             items[i].count += record.count
