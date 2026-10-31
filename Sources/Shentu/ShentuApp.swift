@@ -123,7 +123,7 @@ struct Pending: Identifiable {
 
     static func describe(_ choice: LaunchChoice) -> String {
         var parts = [choice.network ? "Network on" : "No network"]
-        let kinds = choice.categories.map { $0.title.lowercased() }
+        let kinds = choice.fileKinds.map(\.title)
         parts.append(kinds.isEmpty ? "reads none of your files" : "reads " + kinds.joined(separator: ", "))
         parts.append(choice.keepSettings ? "keeps its settings" : "starts fresh")
         return parts.joined(separator: " · ")
@@ -185,8 +185,8 @@ struct OptionsView: View {
         Binding(get: { store.pending?.choice ?? item.choice }, set: { store.pending?.choice = $0 })
     }
 
-    private func kind(_ category: FileCategory) -> Binding<Bool> {
-        Binding(get: { choice.wrappedValue.allows(category) }, set: { choice.wrappedValue.set(category, $0) })
+    private func kind(_ kind: FileKind) -> Binding<Bool> {
+        Binding(get: { choice.wrappedValue.allows(kind) }, set: { choice.wrappedValue.set(kind, $0) })
     }
 
     var body: some View {
@@ -197,8 +197,13 @@ struct OptionsView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Files it can open in your home folder and on drives:")
-                ForEach(FileCategory.allCases, id: \.self) { category in
-                    Toggle(category.title, isOn: kind(category))
+                // Finder's Kind names, in two columns; hover one for the exact extensions.
+                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                          alignment: .leading, spacing: 6) {
+                    ForEach(FileKind.allCases, id: \.self) { kind in
+                        Toggle(kind.title, isOn: self.kind(kind))
+                            .help(kind.extensions.map { "." + $0 }.joined(separator: " "))
+                    }
                 }
                 Text("It can see file and folder names, but not other files' contents. System files and the app itself are always readable.")
                     .font(.caption).foregroundStyle(.secondary)

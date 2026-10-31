@@ -114,7 +114,7 @@ import Testing
     }
 
     @Test func writesOnlyToTheRunsTempFolder() throws {
-        let strict = try profile(LaunchChoice(kinds: [.media]))
+        let strict = try profile(LaunchChoice(kinds: [.movie]))
         #expect(try can(strict, "write", scratch + "/f"), "the run's temp folder")
         #expect(try can(strict, "tmp"), "TMPDIR, which is the run's temp folder")
         #expect(try !can(strict, "write", dir + "/outside.txt"), "the shared /private/tmp")
@@ -126,7 +126,7 @@ import Testing
     }
 
     @Test func readsOnlyTheChosenKinds() throws {
-        let media = try profile(LaunchChoice(kinds: [.media]))
+        let media = try profile(LaunchChoice(kinds: [.movie]))
         #expect(try can(media, "read", home + "/Movies/clip.mp4"), "media in home")
         #expect(try can(media, "read", drive + "/clip.mp4"), "media on a drive")
         #expect(try can(media, "read", app + "/Contents/Info.plist"), "its own bundle")
@@ -135,17 +135,17 @@ import Testing
         #expect(try !can(media, "read", home + "/Pictures/photo.jpg"), "an image in home")
         #expect(try !can(media, "read", drive + "/notes.txt"), "a document on a drive")
 
-        let images = try profile(LaunchChoice(kinds: [.images]))
+        let images = try profile(LaunchChoice(kinds: [.image]))
         #expect(try can(images, "read", home + "/Pictures/photo.jpg"), "images when chosen")
         #expect(try !can(images, "read", home + "/Movies/clip.mp4"), "then not media")
-        #expect(try can(try profile(LaunchChoice(kinds: [.documents])), "read", home + "/Documents/private.txt"), "documents when chosen")
+        #expect(try can(try profile(LaunchChoice(kinds: [.text])), "read", home + "/Documents/private.txt"), "text when chosen")
 
         #expect(try !can(try profile(LaunchChoice()), "read", home + "/Movies/clip.mp4"), "nothing chosen, nothing read")
         let homeDeny = "(deny file-read* file-write*\n    (subpath \"\(home)\")"
         try #require(media.contains(homeDeny))
         #expect(try can(media.replacingOccurrences(of: homeDeny, with: "(deny file-read* file-write*\n    (subpath \"/nonexistent\")"),
                         "read", home + "/Documents/private.txt"), "mutation: the home rule is what blocks it")
-        #expect(try can(try profile(LaunchChoice(kinds: [.media])).replacingOccurrences(of: "(subpath \"/Volumes\")", with: "(subpath \"/nonexistent\")"),
+        #expect(try can(try profile(LaunchChoice(kinds: [.movie])).replacingOccurrences(of: "(subpath \"/Volumes\")", with: "(subpath \"/nonexistent\")"),
                         "read", drive + "/notes.txt"), "mutation: the drives rule is what blocks it")
     }
 
@@ -159,7 +159,7 @@ import Testing
     }
 
     @Test func noOtherPrograms() throws {
-        let strict = try profile(LaunchChoice(network: true, kinds: FileCategory.allCases, keepSettings: true))
+        let strict = try profile(LaunchChoice(network: true, kinds: FileKind.allCases, keepSettings: true))
         #expect(try can(strict, "write", scratch + "/f"), "control: the app itself runs")
         #expect(try !can(strict, "exec"), "even with every option on, no other programs")
         #expect(try can(try without("(deny process-exec* (subpath \"/\"))", strict), "exec"), "mutation: the rule is what blocks it")
@@ -179,10 +179,25 @@ import Testing
         #expect(blocked.tempFolder != ok.tempFolder, "a fresh folder every run")
     }
 
+    /// Finder's kinds as macOS classifies them here, and none lets code or private keys through.
+    @Test func kindsMatchFinder() {
+        #expect(FileKind.movie.extensions.contains("mp4") && !FileKind.movie.extensions.contains("mp3"))
+        #expect(FileKind.music.extensions.contains("mp3"))
+        #expect(FileKind.pdf.extensions == ["pdf"])
+        #expect(FileKind.text.extensions.contains("txt") && !FileKind.text.extensions.contains("pdf"))
+        #expect(FileKind.document.extensions.contains("docx") && !FileKind.document.extensions.contains("pptx"))
+        #expect(FileKind.presentation.extensions.contains("pptx"))
+        #expect(FileKind.archive.extensions.contains("zip"))
+        #expect(FileKind.image.extensions.contains("jpg"))
+        let all = Set(FileKind.allCases.flatMap(\.extensions))
+        #expect(all.isDisjoint(with: ["key", "ts", "sh", "py", "json", "env", "pem"]), "\(all.sorted())")
+        for kind in FileKind.allCases { #expect(!kind.extensions.isEmpty, "\(kind)") }
+    }
+
     @Test func choicesAreRemembered() throws {
         let remembered = RememberedChoices(env())
         #expect(remembered.choice(for: "x") == LaunchChoice(), "strict default for a new app")
-        let choice = LaunchChoice(network: true, kinds: [.images], keepSettings: true)
+        let choice = LaunchChoice(network: true, kinds: [.image], keepSettings: true)
         remembered.save(choice, for: "x")
         #expect(RememberedChoices(env()).choice(for: "x") == choice)
     }

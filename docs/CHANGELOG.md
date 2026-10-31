@@ -1,5 +1,10 @@
 # Changelog — Shentu
 
+## [Unreleased]
+
+### Changed
+- The file checkboxes follow Finder's Kind menu: Archive, Document, Image, Movie, Music, PDF, Presentation, Text, in two columns. Hovering one shows its extensions. They're defined in `ShentuCore/Kinds.swift` by UTType conformance, so the vendored MenshenCore is untouched. Code, scripts and `.key`/`.ts` are never included (`kindsMatchFinder`).
+
 ## [0.1.0] — 2026-10-31
 
 ### Added

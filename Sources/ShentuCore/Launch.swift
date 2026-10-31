@@ -7,33 +7,34 @@ import Foundation
 public struct LaunchChoice: Codable, Equatable, Sendable {
     /// Internet and local-network connections.
     public var network = false
-    /// File categories (`FileCategory` raw values) readable in your home folder and on drives.
+    /// File kinds (`FileKind` raw values) readable in your home folder and on drives.
     public var kinds: [String] = []
     /// The app's own settings, caches and saved state in ~/Library. Off: it starts fresh and
     /// nothing is kept.
     public var keepSettings = false
 
-    public init(network: Bool = false, kinds: [FileCategory] = [], keepSettings: Bool = false) {
+    public init(network: Bool = false, kinds: [FileKind] = [], keepSettings: Bool = false) {
         self.network = network
         self.kinds = kinds.map(\.rawValue)
         self.keepSettings = keepSettings
     }
 
-    public var categories: [FileCategory] {
-        FileCategory.allCases.filter { kinds.contains($0.rawValue) }
+    /// The chosen kinds, in Finder's order. Names this version doesn't know are ignored.
+    public var fileKinds: [FileKind] {
+        FileKind.allCases.filter { kinds.contains($0.rawValue) }
     }
 
-    public func allows(_ category: FileCategory) -> Bool { kinds.contains(category.rawValue) }
+    public func allows(_ kind: FileKind) -> Bool { kinds.contains(kind.rawValue) }
 
-    public mutating func set(_ category: FileCategory, _ on: Bool) {
-        kinds.removeAll { $0 == category.rawValue }
-        if on { kinds.append(category.rawValue) }
+    public mutating func set(_ kind: FileKind, _ on: Bool) {
+        kinds.removeAll { $0 == kind.rawValue }
+        if on { kinds.append(kind.rawValue) }
     }
 
     /// The Restricted Sandbox settings for this launch.
     public var sandbox: RestrictedSandbox {
         RestrictedSandbox(network: network, otherPrograms: false, ownData: keepSettings,
-                          readFileTypes: categories.flatMap(\.extensions), limitDrives: true, ephemeralTemp: true)
+                          readFileTypes: fileKinds.flatMap(\.extensions), limitDrives: true, ephemeralTemp: true)
     }
 }
 
