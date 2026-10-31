@@ -58,7 +58,7 @@ public enum Enforce {
         say("running \(target.identity.name) in the Restricted Sandbox: \(sandbox.summary).")
         if let scratch { say("temp folder for this run (deleted when it quits): \(scratch)") }
         var summary = try logged(profileURL: profileURL, target: target, options: options, control: control,
-                                 logging: LoggingSettings(), ownFolders: sandbox.readWrite.map(environment.expand),
+                                 ownFolders: sandbox.readWrite.map(environment.expand),
                                  environment: environment, say: say)
         summary.tempFolder = scratch
         return summary
@@ -67,7 +67,7 @@ public enum Enforce {
     /// Runs the target under a profile and writes every denial (and reported allow) to a new log.
     static func logged(
         profileURL: URL, target: ResolvedTarget, options: EnforceOptions, control: SessionControl,
-        logging: LoggingSettings, ownFolders: [String], environment: ShentuEnvironment,
+        ownFolders: [String], environment: ShentuEnvironment,
         say: @escaping @Sendable (String) -> Void
     ) throws -> EnforceSummary {
         let runId = UUID().uuidString
@@ -82,7 +82,6 @@ public enum Enforce {
             profile: profileURL, target: target, arguments: options.arguments,
             duration: options.duration, environment: environment, control: control,
             onEvent: { event in
-                if event.verdict == .deny && !logging.denials { return }
                 let record = EnforceRecord(
                     ts: Date(), runId: runId, pid: event.pid, process: event.process,
                     verdict: event.verdict, operation: event.operation,

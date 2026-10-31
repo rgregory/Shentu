@@ -3,7 +3,7 @@ import Foundation
 /// The Restricted Sandbox: one set of restrictions you choose once, applied to any app you drop
 /// on Shentu, with no learning. Everything is allowed except what is switched off here, and
 /// the sanity set (secrets, other apps' data, persistence) is always blocked.
-public struct RestrictedSandbox: Codable, Equatable, Sendable {
+public struct RestrictedSandbox: Equatable, Sendable {
     /// Internet and local-network connections. Local sockets (logging, DNS) always work.
     public var network = false
     /// Starting other programs, and having macOS open apps, documents or links. The app's own
@@ -18,7 +18,7 @@ public struct RestrictedSandbox: Codable, Equatable, Sendable {
     /// Readable, never writable.
     public var readOnly: [String] = []
     /// File extensions readable anywhere in your home folder (and on drives, with `limitDrives`),
-    /// e.g. a `FileCategory`'s extensions. Stored as the list itself, so it stays auditable.
+    /// e.g. a `FileKind`'s extensions. Stored as the list itself, so it stays auditable.
     public var readFileTypes: [String] = []
     /// External drives (`/Volumes`) get the same limits as your home folder: names visible,
     /// contents only for the folders and file types you chose.
@@ -41,38 +41,7 @@ public struct RestrictedSandbox: Codable, Equatable, Sendable {
         self.ephemeralTemp = ephemeralTemp
     }
 
-    /// Settings saved before a field existed load with that field's default.
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        let d = RestrictedSandbox()
-        network = try c.decodeIfPresent(Bool.self, forKey: .network) ?? d.network
-        otherPrograms = try c.decodeIfPresent(Bool.self, forKey: .otherPrograms) ?? d.otherPrograms
-        ownData = try c.decodeIfPresent(Bool.self, forKey: .ownData) ?? d.ownData
-        readWrite = try c.decodeIfPresent([String].self, forKey: .readWrite) ?? d.readWrite
-        readOnly = try c.decodeIfPresent([String].self, forKey: .readOnly) ?? d.readOnly
-        readFileTypes = try c.decodeIfPresent([String].self, forKey: .readFileTypes) ?? d.readFileTypes
-        limitDrives = try c.decodeIfPresent(Bool.self, forKey: .limitDrives) ?? d.limitDrives
-        ephemeralTemp = try c.decodeIfPresent(Bool.self, forKey: .ephemeralTemp) ?? d.ephemeralTemp
-    }
-
-    public static func url(_ environment: ShentuEnvironment) -> URL {
-        environment.dataRoot.appendingPathComponent("restricted-sandbox.json")
-    }
-
-    /// The saved settings, or the strict defaults if none are saved.
-    public static func load(_ environment: ShentuEnvironment) -> RestrictedSandbox {
-        guard let data = try? Data(contentsOf: url(environment)) else { return RestrictedSandbox() }
-        return (try? JSONDecoder().decode(RestrictedSandbox.self, from: data)) ?? RestrictedSandbox()
-    }
-
-    public func save(_ environment: ShentuEnvironment) throws {
-        try FileManager.default.ensureDirectory(environment.dataRoot)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(self).write(to: Self.url(environment), options: .atomic)
-    }
-
-    /// One-line summary for the UI and the CLI.
+    /// One-line summary for the profile's header and the run's output.
     public var summary: String {
         var parts = [network ? "network on" : "no network"]
         let temp = ephemeralTemp ? "a temp folder for this run" : "temp"
@@ -176,7 +145,8 @@ extension SBPLCompiler {
         // Folders become listable too: without that, the app (and its own Open panel, which
         // runs in-process for unsandboxed apps) couldn't find the files it may read (tested).
         let types = box.readFileTypes.filter { !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber } }
-        if !types.isEmpty, let filter = filterText(Filter(.fileTypes, types.joined(separator: ","))) {
+        if !types.isEmpty {
+            let filter = filterText(.fileTypes(types.joined(separator: ",")))
             out.append(";; files of the types you chose, and folder listings to find them")
             out.append(statement("allow", ["file-read*"], [filter, "(vnode-type DIRECTORY)"], report: false))
         }
@@ -187,8 +157,8 @@ extension SBPLCompiler {
                     "(deny lsopen)"]
         }
         let anchors = own + rw
-        let rules = Hardening(environment: environment, ownAnchors: anchors).rules(hits: [:])
-        out += ["", ";; sanity set (last, so it wins)"] + statements(rules, logging: LoggingSettings())
+        let rules = Hardening(environment: environment, ownAnchors: anchors).rules()
+        out += ["", ";; sanity set (last, so it wins)"] + statements(rules)
         out.append("(deny file-link (subpath \"/\"))")
         return out.joined(separator: "\n") + "\n"
     }

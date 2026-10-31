@@ -30,8 +30,7 @@ public struct ShentuEnvironment: Sendable {
         self.userTempRoot = userTempRoot
     }
 
-    /// `SHENTU_DATA=/some/dir` keeps configs, captures and logs together in one folder
-    /// (handy for testing, or for keeping configs in a repo).
+    /// `SHENTU_DATA=/some/dir` keeps profiles and logs together in one folder (handy for testing).
     public static func current() -> ShentuEnvironment {
         let home = NSHomeDirectory()
         let lib = URL(fileURLWithPath: home).appendingPathComponent("Library")
@@ -48,21 +47,15 @@ public struct ShentuEnvironment: Sendable {
         )
     }
 
-    /// The current user's environment with explicit data and log folders (used by launchers,
-    /// which carry the folders they were created with).
+    /// The current user's environment with explicit data and log folders.
     public static func current(dataRoot: URL, logsRoot: URL) -> ShentuEnvironment {
         ShentuEnvironment(home: NSHomeDirectory(), dataRoot: dataRoot, logsRoot: logsRoot,
                            userTempRoot: darwinUserRoot())
     }
 
     public var profilesDir: URL { dataRoot.appendingPathComponent("profiles") }
-    public var swapsURL: URL { dataRoot.appendingPathComponent("swaps.json") }
     public var canaryDir: URL { dataRoot.appendingPathComponent("canary") }
-    public func learnDir(_ key: String) -> URL { dataRoot.appendingPathComponent("learn/\(key)") }
     public func logsDir(_ key: String) -> URL { logsRoot.appendingPathComponent(key) }
-    public func configURL(_ key: String) -> URL { profilesDir.appendingPathComponent("\(key).json") }
-    /// Private temp folder for the Temp-only profile (exported to the app as TMPDIR).
-    public func privateTemp(_ key: String) -> URL { dataRoot.appendingPathComponent("temp/\(key)") }
     /// `…/T`: the temp folder every unsandboxed app of this user shares (NSTemporaryDirectory).
     public var userTempDir: String? { userTempRoot.map { $0 + "/T" } }
     /// `…/C` (caches) and `…/0`: one folder per app, like the ~/Library areas.

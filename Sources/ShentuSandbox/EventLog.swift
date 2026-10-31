@@ -26,7 +26,7 @@ final class NDJSONWriter: @unchecked Sendable {
     }
 }
 
-/// Enforce-mode record: every denial plus the risky allows the profile reports.
+/// One logged event: every denial the kernel reports for the run.
 public struct EnforceRecord: Codable, Equatable, Sendable {
     public var ts: Date
     public var runId: String
@@ -42,23 +42,29 @@ public struct EnforceRecord: Codable, Equatable, Sendable {
     static func category(for event: SandboxEvent, ownFolders: [String] = []) -> String {
         let op = event.operation
         if event.verdict == .deny { return "denied" }
-        if op.hasPrefix("network-") { return ReportCategory.network.rawValue }
-        if op.hasPrefix("process-exec") { return ReportCategory.exec.rawValue }
+        if op.hasPrefix("network-") { return "network" }
+        if op.hasPrefix("process-exec") { return "exec" }
         if op.hasPrefix("file-write") {
-            let path = Generalizer.path(from: event.target) ?? ""
-            return ownFolders.contains { path.isWithin($0) } ? "write" : ReportCategory.writeOutside.rawValue
+            let path = Self.path(from: event.target) ?? ""
+            return ownFolders.contains { path.isWithin($0) } ? "write" : "write-outside"
         }
         if op.hasPrefix("file-read") || op == "file-map-executable" { return "read" }
         if op.hasPrefix("mach-") { return "service" }
         if op.hasPrefix("iokit") { return "device" }
         return "allowed"
     }
-}
 
-/// Raw learn-mode capture, used to (re)generate configs.
-func readCapture(_ url: URL) throws -> [SandboxEvent] {
-    let decoder = JSONDecoder()
-    return try String(contentsOf: url, encoding: .utf8)
-        .split(separator: "\n")
-        .compactMap { try? decoder.decode(SandboxEvent.self, from: Data($0.utf8)) }
+    /// The file path in a sandbox report's target (`path:/x xattr:…`, `target:/x …`, or `/x`).
+    static func path(from target: String) -> String? {
+        if target.hasPrefix("/") { return target }
+        for (prefix, terminators) in [("path:", [" xattr:", " ioctl-command:"]), ("target:", [" extension-class:"])] {
+            guard target.hasPrefix(prefix) else { continue }
+            var body = Substring(target.dropFirst(prefix.count))
+            for t in terminators {
+                if let r = body.range(of: t, options: .backwards) { body = body[..<r.lowerBound] }
+            }
+            return body.hasPrefix("/") ? String(body) : nil
+        }
+        return nil
+    }
 }

@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-/// Who the config was learned against. Enforce refuses to run a different binary under it.
+/// The app or binary being run, and who signed it.
 public struct TargetIdentity: Codable, Equatable, Sendable {
     public var path: String
     public var executable: String
@@ -11,7 +11,7 @@ public struct TargetIdentity: Codable, Equatable, Sendable {
     public var signingId: String?
     public var cdhash: String?
 
-    /// File-name-safe key for profiles, captures and logs.
+    /// File-name-safe key for profiles, logs and remembered choices.
     public var key: String {
         let raw = bundleId ?? signingId ?? name
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
@@ -65,24 +65,6 @@ public struct ResolvedTarget: Sendable {
         )
     }
 
-    /// The same app described at another location (its identity and signature don't change).
-    func moved(to path: String) -> ResolvedTarget {
-        let old = identity.path
-        guard path != old else { return self }
-        var copy = self
-        copy.identity.path = path
-        if identity.executable.hasPrefix(old + "/") {
-            copy.identity.executable = path + identity.executable.dropFirst(old.count)
-        }
-        if bundlePath != nil { copy.bundlePath = path }
-        return copy
-    }
-
-    /// The cdhash of the code at `path`, or nil if unsigned.
-    public static func signingCdhash(_ path: String) -> String? {
-        SigningInfo.read(URL(fileURLWithPath: path)).cdhash
-    }
-
     /// Whether Seatbelt can wrap this app, decided from its signature alone (no launch).
     public var wrapStatus: WrapStatus {
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec") else {
@@ -131,8 +113,7 @@ struct SigningInfo {
         if SecRequirementCreateWithString("anchor apple" as CFString, [], &requirement) == errSecSuccess,
            let req = requirement {
             // Only the anchor matters here, so skip re-hashing every file in the bundle: same answer
-            // in under a millisecond instead of up to ~80 ms (measured). Replace still runs a full
-            // `codesign --verify` before it touches an app.
+            // in under a millisecond instead of up to ~80 ms (measured).
             let quick = SecCSFlags(rawValue: kSecCSDoNotValidateResources | kSecCSDoNotValidateExecutable)
             result.isAppleAnchor = SecStaticCodeCheckValidity(code, quick, req) == errSecSuccess
         }
@@ -149,16 +130,6 @@ public enum WrapStatus: Equatable, Sendable {
     case appleApp
     case unavailable(String)
 
-    /// Short label for lists, nil when the app can be wrapped.
-    public var badge: String? {
-        switch self {
-        case .wrappable: return nil
-        case .alreadySandboxed: return "Already sandboxed"
-        case .appleApp: return "Apple app"
-        case .unavailable: return "Unavailable"
-        }
-    }
-
     /// The full reason, nil when the app can be wrapped.
     public func problem(name: String) -> String? {
         switch self {
@@ -170,15 +141,6 @@ public enum WrapStatus: Equatable, Sendable {
             return "\(name) is signed by Apple. macOS launch constraints kill Apple's own apps unless launchd starts them, so they can't be wrapped."
         case .unavailable(let why):
             return why
-        }
-    }
-
-    /// Checks an app on disk (about a millisecond; nothing is launched).
-    public static func check(_ path: String) -> WrapStatus {
-        do {
-            return try ResolvedTarget.resolve(path).wrapStatus
-        } catch {
-            return .unavailable("\(error)")
         }
     }
 }

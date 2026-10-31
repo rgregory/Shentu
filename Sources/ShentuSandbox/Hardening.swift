@@ -1,7 +1,7 @@
 import Foundation
 
 /// Built-in rules that protect credentials, other apps' data and persistence locations.
-/// They are always compiled last, so they override broader learned allows.
+/// They are always compiled last, so they override the profile's broader allows.
 public struct Hardening: Sendable {
     public enum Protection: Sendable {
         /// Deny reading and writing (credential stores, other apps' data).
@@ -18,11 +18,6 @@ public struct Hardening: Sendable {
         /// For secrets matched by name anywhere under the home folder: a regex on the full path
         /// (then `path` is just "~"). Compiled as `(require-all (subpath home) (regex …))`.
         public var pattern: String? = nil
-    }
-
-    public struct Hit: Sendable {
-        public var count = 0
-        public var example = ""
     }
 
     public static let entries: [Entry] = [
@@ -95,10 +90,6 @@ public struct Hardening: Sendable {
         Entry(id: "H-photos", title: "Photos library", path: "~/Pictures/Photos Library.photoslibrary", protection: .readWrite),
     ]
 
-    public static let appleEventsID = "H-apple-events"
-    public static let osascriptID = "H-osascript"
-    public static let osascriptPath = "/usr/bin/osascript"
-
     let environment: ShentuEnvironment
     /// Absolute paths of folders the app owns. Sensitive entries never block the app's own data.
     let ownAnchors: [String]
@@ -108,58 +99,28 @@ public struct Hardening: Sendable {
         self.ownAnchors = ownAnchors
     }
 
-    /// The entry that protects `path` for this kind of access, or nil if the access isn't sensitive.
-    public func entry(for path: String, isWrite: Bool) -> Entry? {
-        if ownAnchors.contains(where: { path.isWithin($0) }) { return nil }
-        return Self.entries.first { entry in
-            guard isWrite || entry.protection == .readWrite else { return false }
-            guard path.isWithin(environment.expand(entry.path)) else { return false }
-            guard let pattern = entry.pattern else { return true }
-            return path.range(of: pattern, options: .regularExpression) != nil
-        }
-    }
-
-    /// Compiles the overlay. `hits` maps entry IDs to what learning saw (flag-and-deny).
-    public func rules(hits: [String: Hit]) -> [Rule] {
-        var rules: [Rule] = []
+    /// The sanity set as rules. An entry inside one of the app's own folders is allowed; an own
+    /// folder inside a protected entry is re-allowed right after the entry's deny.
+    func rules() -> [SBPLRule] {
+        var rules: [SBPLRule] = []
         for entry in Self.entries {
             let full = environment.expand(entry.path)
             let operations = entry.protection == .readWrite ? ["file-read*", "file-write*"] : ["file-write*"]
-            let filter = entry.pattern.map { Filter(.homePattern, $0) } ?? Filter(.subpath, entry.path)
-            if entry.pattern == nil, let owner = ownAnchors.first(where: { full.isWithin($0) }) {
-                rules.append(Rule(id: entry.id, action: .allow, operations: operations, filter: filter,
-                                  source: .hardening,
-                                  note: "\(entry.title): inside the app's own folder \(environment.abbreviate(owner)), so allowed."))
+            let filter: SBPLFilter = entry.pattern.map { .homePattern($0) } ?? .subpath(entry.path)
+            if entry.pattern == nil, ownAnchors.contains(where: { full.isWithin($0) }) {
+                rules.append(SBPLRule(.allow, operations, filter))
                 continue
             }
-            rules.append(Rule(id: entry.id, action: .deny, operations: operations, filter: filter,
-                              source: .hardening, seen: hits[entry.id]?.count ?? 0,
-                              flagged: hits[entry.id] == nil ? nil : true,
-                              note: note(entry.title, hits[entry.id])))
+            rules.append(SBPLRule(.deny, operations, filter))
             // The deny above would also block the app's own folder inside it (e.g. its own
             // group container), so re-allow exactly that folder right after.
             for own in ownAnchors where entry.pattern == nil && own.isWithin(full) && own != full {
-                let ownFilter = Filter(.subpath, environment.abbreviate(own))
-                let hash = Rule.contentID(action: .allow, operations: operations, filter: ownFilter).dropFirst(2)
-                rules.append(Rule(id: "H-own-\(hash)", action: .allow, operations: operations, filter: ownFilter,
-                                  source: .hardening, note: "The app's own data inside \(entry.path)."))
+                rules.append(SBPLRule(.allow, operations, .subpath(environment.abbreviate(own))))
             }
         }
-        rules.append(Rule(id: Self.appleEventsID, action: .deny, operations: ["appleevent-send"], filter: .any,
-                          source: .hardening, seen: hits[Self.appleEventsID]?.count ?? 0,
-                          flagged: hits[Self.appleEventsID] == nil ? nil : true,
-                          note: note("Sending Apple Events to other apps", hits[Self.appleEventsID])))
-        rules.append(Rule(id: Self.osascriptID, action: .deny, operations: ["process-exec*"],
-                          filter: Filter(.literal, Self.osascriptPath), source: .hardening,
-                          seen: hits[Self.osascriptID]?.count ?? 0,
-                          flagged: hits[Self.osascriptID] == nil ? nil : true,
-                          note: note("Running AppleScript via osascript", hits[Self.osascriptID])))
+        rules.append(SBPLRule(.deny, ["appleevent-send"]))
+        rules.append(SBPLRule(.deny, ["process-exec*"], .literal("/usr/bin/osascript")))
         return rules
-    }
-
-    private func note(_ title: String, _ hit: Hit?) -> String {
-        guard let hit else { return "\(title). Not seen during learning." }
-        return "\(title). FLAGGED: seen \(hit.count)× during learning (e.g. \(hit.example)). Denied by default; set action to \"allow\" to permit."
     }
 }
 
