@@ -8,8 +8,10 @@ final class NDJSONWriter: @unchecked Sendable {
 
     init(_ url: URL) throws {
         try FileManager.default.ensureDirectory(url.deletingLastPathComponent())
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-        handle = try FileHandle(forWritingTo: url)
+        // O_EXCL: never truncate or append to another run's log.
+        let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { throw ShentuError.failed("can't create the log \(url.path): \(String(cString: strerror(errno)))") }
+        handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601

@@ -53,7 +53,6 @@ public struct ShentuEnvironment: Sendable {
                            userTempRoot: darwinUserRoot())
     }
 
-    public var profilesDir: URL { dataRoot.appendingPathComponent("profiles") }
     public var canaryDir: URL { dataRoot.appendingPathComponent("canary") }
     public func logsDir(_ key: String) -> URL { logsRoot.appendingPathComponent(key) }
     /// `…/T`: the temp folder every unsandboxed app of this user shares (NSTemporaryDirectory).

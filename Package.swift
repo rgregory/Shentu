@@ -25,7 +25,7 @@ let package = Package(
         .target(name: "ShentuSandbox"),
         .testTarget(
             name: "ShentuTests",
-            dependencies: ["ShentuCore"],
+            dependencies: ["ShentuCore", "ShentuSandbox"],
             resources: [.copy("Fixtures")],
             swiftSettings: testSettings
         ),

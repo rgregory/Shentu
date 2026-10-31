@@ -6,9 +6,10 @@ Drop a Mac app on Shentu, choose what it can reach for this run, and it opens in
 |---|---|
 | Internet and network | Off: no internet or local-network connections. |
 | Files it can open: Archive, Document, Image, Movie, Music, PDF, Presentation, Text | Finder's Kind names. In your home folder and on drives (`/Volumes`), it can open only files of these kinds; hover a checkbox for its extensions. It can see file and folder names. System files and the app itself are always readable. Finder's other kinds aren't offered: Application and Executable are programs, folders are always listable, and Other would mean everything. |
-| Keep its settings between runs | Off (the default): no access to its own ~/Library data, and no saved settings, so it starts fresh. |
+| Keep its settings between runs | Off (the default): no access to its own ~/Library data, and no saved settings, so it starts fresh. On: its folders in ~/Library, found by the name and bundle ID in its Info.plist. Those are the app's own claims, so only plain folder names are used, and the sanity set still wins: an app calling itself Slack doesn't get Slack's data (and the real Slack can't keep its settings in Shentu). |
 | *(always)* | It saves files only to a temporary folder made for this run, which is deleted when it quits. |
 | *(always)* | It can't start other programs or open links. A built-in sanity set (secrets, other apps' data, persistence) is always blocked. |
+| *(always)* | Stop, or the app quitting, ends everything it started too. |
 
 Your choices are remembered per app. What the app was blocked from is logged; Show Log opens it.
 
@@ -18,7 +19,7 @@ Your choices are remembered per app. What the app was blocked from is logged; Sh
 
 Everything Shentu needs is in this folder. `Sources/ShentuSandbox` builds the Seatbelt profiles, launches the app and keeps the deny log. `Sources/ShentuCore` maps the pop-up to a `RestrictedSandbox` (`Sources/ShentuCore/Launch.swift`) and calls `Enforce.runRestricted`.
 
-Shentu's data lives in `~/Library/Application Support/Shentu` (profiles, remembered choices) and `~/Library/Logs/Shentu`.
+Shentu keeps remembered choices in `~/Library/Application Support/Shentu`. Each run's profile (`.sb`) and log (`.jsonl`) go in `~/Library/Logs/Shentu/<app>/`, named by time plus a random part, so runs never share or overwrite them.
 
 ## Build (no Xcode needed)
 

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ShentuCore
+@testable import ShentuSandbox
 
 /// Each pop-up option, checked by the kernel: a self-built dummy app (never a real one) runs
 /// under the profile Shentu builds for a choice and tries each step. Every must-fail group has
@@ -59,23 +60,41 @@ import Testing
         return p.terminationStatus
     }
 
+    /// Another app bundle with the probe inside, whose Info.plist says what the app wants to
+    /// be called. Returns the bundle path.
+    func bundle(_ folder: String, name: String, id: String) throws -> String {
+        let path = "\(dir)/\(folder).app"
+        try FileManager.default.createDirectory(atPath: path + "/Contents/MacOS", withIntermediateDirectories: true)
+        try FileManager.default.copyItem(atPath: app + "/Contents/MacOS/Dummy", toPath: path + "/Contents/MacOS/Dummy")
+        let plist = ["CFBundleExecutable": "Dummy", "CFBundleIdentifier": id, "CFBundleName": name,
+                     "CFBundlePackageType": "APPL"]
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            .write(to: URL(fileURLWithPath: path + "/Contents/Info.plist"))
+        return path
+    }
+
     func env() -> ShentuEnvironment {
         ShentuEnvironment(home: home, dataRoot: URL(fileURLWithPath: dir + "/data"),
                            logsRoot: URL(fileURLWithPath: dir + "/logs"), userTempRoot: nil)
     }
 
     /// The profile Shentu.launch would use for this choice, with `scratch` as the run's temp folder.
-    func profile(_ choice: LaunchChoice) throws -> String {
-        let text = SBPLCompiler(environment: env()).restrictedProfile(try ResolvedTarget.resolve(app), choice.sandbox, scratch: scratch)
+    func profile(_ choice: LaunchChoice, app: String? = nil) throws -> String {
+        let text = SBPLCompiler(environment: env()).restrictedProfile(try ResolvedTarget.resolve(app ?? self.app), choice.sandbox, scratch: scratch)
         #expect(SBPLCompiler.validate(text) == nil)
         return text
     }
 
     /// Runs one probe step under the profile; true if it worked.
     func can(_ profile: String, _ step: String...) throws -> Bool {
+        try can(profile, as: app + "/Contents/MacOS/Dummy", step)
+    }
+
+    /// The same, for another bundle's copy of the probe.
+    func can(_ profile: String, as executable: String, _ step: [String]) throws -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-        p.arguments = ["-p", profile, app + "/Contents/MacOS/Dummy"] + step
+        p.arguments = ["-p", profile, executable] + step
         p.environment = ["TMPDIR": scratch + "/"]
         p.standardOutput = FileHandle.nullDevice
         try p.run()
@@ -177,6 +196,130 @@ import Testing
         let blocked = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["tmp", "write", dir + "/outside.txt"])
         #expect(blocked.outcome.status == 1, "one step fails: the write outside its temp folder")
         #expect(blocked.tempFolder != ok.tempFolder, "a fresh folder every run")
+        #expect(blocked.logURL != ok.logURL && blocked.profileURL != ok.profileURL, "own log and profile every run, even in the same second")
+        for url in [ok.logURL, ok.profileURL, blocked.logURL, blocked.profileURL] {
+            #expect(FileManager.default.fileExists(atPath: url.path), "\(url.lastPathComponent) kept")
+        }
+    }
+
+    /// The app's name and bundle ID come from its own Info.plist. Neither may open another
+    /// app's data or anything in the sanity set, even with "keep its settings" on.
+    @Test func appNamesCantReachOtherData() throws {
+        let fm = FileManager.default
+        let slackData = home + "/Library/Application Support/Slack"
+        try fm.createDirectory(atPath: slackData, withIntermediateDirectories: true)
+        try "token".write(toFile: slackData + "/session", atomically: true, encoding: .utf8)
+        try fm.createDirectory(atPath: home + "/.ssh", withIntermediateDirectories: true)
+        try "key".write(toFile: home + "/.ssh/id_test", atomically: true, encoding: .utf8)
+        let keep = LaunchChoice(keepSettings: true)
+
+        let slack = try bundle("NotSlack", name: "Slack", id: "com.example.notslack-\(tag)")
+        let exe = slack + "/Contents/MacOS/Dummy"
+        let ownFolder = "\(home)/Library/Application Support/com.example.notslack-\(tag)"
+        try fm.createDirectory(atPath: ownFolder, withIntermediateDirectories: true)
+        let named = try profile(keep, app: slack)
+        #expect(try can(named, as: exe, ["write", ownFolder + "/settings"]), "control: its own folder, by bundle ID")
+        #expect(try !can(named, as: exe, ["read", slackData + "/session"]), "calling itself Slack doesn't open Slack's data")
+        // The sanity set is last, so the last mention of Slack's folder is its deny.
+        var mutated = named
+        mutated.removeSubrange(try #require(named.range(of: "\n    (subpath \"\(slackData)\")", options: .backwards)))
+        #expect(try can(mutated, as: exe, ["read", slackData + "/session"]), "mutation: the sanity set's Slack rule is what blocks it")
+
+        let sneaky = try bundle("Sneaky", name: "../../.ssh", id: "../../.ssh")
+        let sneakyProfile = try profile(keep, app: sneaky)
+        #expect(!sneakyProfile.split(separator: "\n").contains { $0.contains("(subpath") && $0.contains("..") },
+                "no path built from a name with ..")
+        #expect(try !can(sneakyProfile, as: sneaky + "/Contents/MacOS/Dummy", ["read", home + "/.ssh/id_test"]),
+                "a name with .. doesn't reach ~/.ssh")
+        let injector = try bundle("Injector", name: "X\n(allow default)\n", id: "com.example.injector-\(tag)")
+        let injected = try profile(keep, app: injector)
+        #expect(!injected.contains("\n(allow default)"), "a newline in the name can't start a rule")
+        #expect(RestrictedSandbox.plainName("Google/Chrome") == nil && RestrictedSandbox.plainName("..") == nil
+                && RestrictedSandbox.plainName(".hidden") == nil && RestrictedSandbox.plainName("My App 2") == "My App 2")
+        #expect(Hardening(environment: env()).rules().allSatisfy { $0.action == .deny }, "the sanity set has no exceptions")
+    }
+
+    /// Two runs at once, with different choices: each gets its own profile (writing a shared
+    /// file let one run start under the other's profile) and its own log.
+    @Test func concurrentRunsKeepTheirOwnProfile() throws {
+        let (fd, port) = listener()
+        defer { close(fd) }
+        let results = Results()
+        let group = DispatchGroup()
+        let app = self.app, home = self.home, dir = self.dir
+        for network in [false, true, false, true] {
+            group.enter()
+            DispatchQueue.global().async {
+                defer { group.leave() }
+                let env = ShentuEnvironment(home: home, dataRoot: URL(fileURLWithPath: dir + "/data"),
+                                            logsRoot: URL(fileURLWithPath: dir + "/logs"), userTempRoot: nil)
+                let summary = try? Shentu.launch(app, LaunchChoice(network: network), environment: env,
+                                                 arguments: ["connect", port])
+                results.add(network, summary)
+            }
+        }
+        group.wait()
+        let all = results.all
+        #expect(all.count == 4)
+        for (network, summary) in all {
+            let summary = try #require(summary)
+            #expect((summary.outcome.status == 0) == network, "network \(network ? "on" : "off") got its own profile")
+        }
+        #expect(Set(all.compactMap { $0.1?.logURL }).count == 4, "four logs")
+        #expect(Set(all.compactMap { $0.1?.profileURL }).count == 4, "four profiles")
+    }
+
+    /// Reads the pid a probe helper wrote, waiting briefly for it to appear.
+    func helperPID(_ path: String) throws -> pid_t {
+        for _ in 0..<50 {
+            if let text = try? String(contentsOfFile: path, encoding: .utf8),
+               let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)) { return pid }
+            usleep(100_000)
+        }
+        throw ShentuError.failed("the helper never wrote its pid")
+    }
+
+    /// True once `pid` is gone (zombies are reaped by launchd within moments).
+    func gone(_ pid: pid_t) -> Bool {
+        for _ in 0..<50 {
+            if kill(pid, 0) != 0 { return true }
+            usleep(100_000)
+        }
+        return false
+    }
+
+    /// Stop ends the app and everything it started, not just the app.
+    @Test func stopEndsHelpersToo() throws {
+        let out = dir + "/out"
+        try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
+        let pidfile = out + "/helper.pid"
+        let stop = StopHandle()
+        var options = EnforceOptions(target: app)
+        options.arguments = ["helper", pidfile, "sleep", "60"]
+        options.control = SessionControl(stop: stop)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) { stop.stop() }
+        let start = Date()
+        let summary = try Enforce.runRestricted(options, sandbox: RestrictedSandbox(readWrite: [out], ephemeralTemp: true),
+                                                environment: env())
+        #expect(summary.outcome.stoppedByShentu)
+        #expect(Date().timeIntervalSince(start) < 30, "stopped, not waited out")
+        let helper = try helperPID(pidfile)
+        #expect(gone(helper), "the helper was stopped too")
+    }
+
+    /// Helpers don't outlive the app when it quits by itself.
+    @Test func helpersEndWithTheApp() throws {
+        let out = dir + "/out2"
+        try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
+        let pidfile = out + "/helper.pid"
+        var options = EnforceOptions(target: app)
+        options.arguments = ["helper", pidfile]
+        options.control = SessionControl()
+        let summary = try Enforce.runRestricted(options, sandbox: RestrictedSandbox(readWrite: [out], ephemeralTemp: true),
+                                                environment: env())
+        #expect(summary.outcome.status == 0)
+        let helper = try helperPID(pidfile)
+        #expect(gone(helper), "the helper ended with the app")
     }
 
     /// Finder's kinds as macOS classifies them here, and none lets code or private keys through.
@@ -201,4 +344,12 @@ import Testing
         remembered.save(choice, for: "x")
         #expect(RememberedChoices(env()).choice(for: "x") == choice)
     }
+}
+
+/// Collects results from concurrent runs.
+private final class Results: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [(Bool, EnforceSummary?)] = []
+    func add(_ network: Bool, _ summary: EnforceSummary?) { lock.withLock { items.append((network, summary)) } }
+    var all: [(Bool, EnforceSummary?)] { lock.withLock { items } }
 }

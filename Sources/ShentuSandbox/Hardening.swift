@@ -91,32 +91,19 @@ public struct Hardening: Sendable {
     ]
 
     let environment: ShentuEnvironment
-    /// Absolute paths of folders the app owns. Sensitive entries never block the app's own data.
-    let ownAnchors: [String]
 
-    public init(environment: ShentuEnvironment, ownAnchors: [String]) {
+    public init(environment: ShentuEnvironment) {
         self.environment = environment
-        self.ownAnchors = ownAnchors
     }
 
-    /// The sanity set as rules. An entry inside one of the app's own folders is allowed; an own
-    /// folder inside a protected entry is re-allowed right after the entry's deny.
+    /// The sanity set as rules. Every entry is denied, with no exception for folders the app
+    /// claims as its own: its name and bundle ID come from its own Info.plist, so an app calling
+    /// itself "Slack" must not get Slack's sessions.
     func rules() -> [SBPLRule] {
-        var rules: [SBPLRule] = []
-        for entry in Self.entries {
-            let full = environment.expand(entry.path)
+        var rules = Self.entries.map { entry -> SBPLRule in
             let operations = entry.protection == .readWrite ? ["file-read*", "file-write*"] : ["file-write*"]
-            let filter: SBPLFilter = entry.pattern.map { .homePattern($0) } ?? .subpath(entry.path)
-            if entry.pattern == nil, ownAnchors.contains(where: { full.isWithin($0) }) {
-                rules.append(SBPLRule(.allow, operations, filter))
-                continue
-            }
-            rules.append(SBPLRule(.deny, operations, filter))
-            // The deny above would also block the app's own folder inside it (e.g. its own
-            // group container), so re-allow exactly that folder right after.
-            for own in ownAnchors where entry.pattern == nil && own.isWithin(full) && own != full {
-                rules.append(SBPLRule(.allow, operations, .subpath(environment.abbreviate(own))))
-            }
+            let filter: SBPLFilter = entry.pattern.map { SBPLFilter.homePattern($0) } ?? .subpath(entry.path)
+            return SBPLRule(.deny, operations, filter)
         }
         rules.append(SBPLRule(.deny, ["appleevent-send"]))
         rules.append(SBPLRule(.deny, ["process-exec*"], .literal("/usr/bin/osascript")))

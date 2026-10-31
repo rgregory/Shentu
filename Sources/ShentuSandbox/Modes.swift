@@ -52,12 +52,16 @@ public enum Enforce {
         if let error = SBPLCompiler.validate(text) {
             throw ShentuError.failed("the Restricted Sandbox profile doesn't load:\n\(error)")
         }
-        try fm.ensureDirectory(environment.profilesDir)
-        let profileURL = environment.profilesDir.appendingPathComponent("\(target.identity.key).restricted.sb")
-        try text.write(to: profileURL, atomically: true, encoding: .utf8)
+        // Each run gets its own profile and log, named by time plus a random part: two runs of
+        // the same app (even in the same second) never share or overwrite either file.
+        let runDir = environment.logsDir(target.identity.key)
+        let runName = "\(fileStamp())-\(UUID().uuidString.prefix(8))"
+        try fm.ensureDirectory(runDir)
+        let profileURL = runDir.appendingPathComponent("\(runName).sb")
+        try Data(text.utf8).write(to: profileURL, options: .withoutOverwriting)
         say("running \(target.identity.name) in the Restricted Sandbox: \(sandbox.summary).")
         if let scratch { say("temp folder for this run (deleted when it quits): \(scratch)") }
-        var summary = try logged(profileURL: profileURL, target: target, options: options, control: control,
+        var summary = try logged(profileURL: profileURL, logURL: runDir.appendingPathComponent("\(runName).jsonl"), target: target, options: options, control: control,
                                  ownFolders: sandbox.readWrite.map(environment.expand),
                                  environment: environment, say: say)
         summary.tempFolder = scratch
@@ -66,12 +70,11 @@ public enum Enforce {
 
     /// Runs the target under a profile and writes every denial (and reported allow) to a new log.
     static func logged(
-        profileURL: URL, target: ResolvedTarget, options: EnforceOptions, control: SessionControl,
+        profileURL: URL, logURL: URL, target: ResolvedTarget, options: EnforceOptions, control: SessionControl,
         ownFolders: [String], environment: ShentuEnvironment,
         say: @escaping @Sendable (String) -> Void
     ) throws -> EnforceSummary {
         let runId = UUID().uuidString
-        let logURL = environment.logsDir(target.identity.key).appendingPathComponent("\(fileStamp()).jsonl")
         let log = try NDJSONWriter(logURL)
         defer { log.close() }
         let tally = Tally()

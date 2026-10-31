@@ -5,6 +5,8 @@
 //   tmp             write a file in $TMPDIR, which must be this run's own temp folder
 //   connect <port>  TCP connect to 127.0.0.1:<port>
 //   exec            start /usr/bin/true
+//   helper <path>   fork a child that writes its pid to <path> and sleeps 120 s
+//   sleep <s>       sleep
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -65,6 +67,21 @@ int main(int argc, char **argv) {
             if (rc == 0) waitpid(pid, NULL, 0);
             errno = rc;
             report("exec", rc == 0);
+        } else if (!strcmp(step, "helper") && i + 1 < argc) {
+            const char *pidpath = argv[++i];
+            fflush(stdout);
+            pid_t pid = fork();
+            if (pid == 0) {
+                char b[32];
+                int n = snprintf(b, sizeof b, "%d\n", getpid());
+                int fd = open(pidpath, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+                if (fd >= 0) { write(fd, b, n); close(fd); }
+                sleep(120);
+                _exit(0);
+            }
+            report("helper", pid > 0);
+        } else if (!strcmp(step, "sleep") && i + 1 < argc) {
+            sleep(atoi(argv[++i]));
         }
     }
     fflush(stdout);

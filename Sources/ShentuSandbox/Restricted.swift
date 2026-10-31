@@ -56,20 +56,33 @@ public struct RestrictedSandbox: Equatable, Sendable {
 
     /// The app's own folders under ~/Library, by bundle ID and by name, and its Darwin cache
     /// folders (`…/C/<bundle ID>`, `…/0/<bundle ID>`), never the whole Darwin folder.
+    /// The name and bundle ID come from the app's own Info.plist, so only plain single folder
+    /// names are used: "../Keychains" or "Google/Chrome" would reach other folders. The sanity
+    /// set is compiled last and still denies anything protected that a plain name points at.
     static func ownFolders(_ target: TargetIdentity, _ environment: ShentuEnvironment) -> [String] {
         let lib = environment.home + "/Library"
-        var names = [target.name]
-        if let id = target.bundleId { names.insert(id, at: 0) }
+        let id = target.bundleId.flatMap(plainName)
+        var names = [plainName(target.name)].compactMap { $0 }
+        if let id, !names.contains(id) { names.insert(id, at: 0) }
         var folders: [String] = []
         for name in names {
             folders += ["\(lib)/Application Support/\(name)", "\(lib)/Caches/\(name)", "\(lib)/Logs/\(name)"]
         }
-        if let id = target.bundleId {
+        if let id {
             folders += ["\(lib)/Containers/\(id)", "\(lib)/HTTPStorages/\(id)", "\(lib)/WebKit/\(id)",
                         "\(lib)/Saved Application State/\(id).savedState", "\(lib)/Preferences/\(id).plist"]
                 + environment.userAppAreas.map { "\($0)/\(id)" }
         }
         return folders
+    }
+
+    /// `name` if it is safe as one folder name: letters, digits, space, `.`, `-` and `_`, not
+    /// starting with a dot (so not "." or ".."), at most 255 bytes. Otherwise nil.
+    static func plainName(_ name: String) -> String? {
+        guard !name.isEmpty, !name.hasPrefix("."), name.utf8.count <= 255,
+              name.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || " .-_".unicodeScalars.contains($0)) })
+        else { return nil }
+        return name
     }
 }
 
@@ -100,8 +113,13 @@ extension SBPLCompiler {
         func subpaths(_ paths: [String]) -> [String] { paths.map { "(subpath \(quote($0)))" } }
         let ownBundle = t.path == t.executable ? "(literal \(quote(t.executable)))" : "(subpath \(quote(t.path)))"
 
+        // The name and bundle ID are the app's own text: no control characters (a newline would
+        // end the comment and start a rule).
+        let label = "\(t.name)\(t.bundleId.map { " (\($0))" } ?? "")".unicodeScalars
+            .filter { !CharacterSet.controlCharacters.contains($0) && !CharacterSet.newlines.contains($0) }
+            .map(String.init).joined()
         var out = [
-            ";; Shentu Restricted Sandbox for \(t.name)\(t.bundleId.map { " (\($0))" } ?? ""): \(box.summary).",
+            ";; Shentu Restricted Sandbox for \(label): \(box.summary).",
             "(version 1)",
             "(deny default)",
             "(import \"system.sb\")",
@@ -156,8 +174,7 @@ extension SBPLCompiler {
                     "(allow process-exec* \(ownBundle))",
                     "(deny lsopen)"]
         }
-        let anchors = own + rw
-        let rules = Hardening(environment: environment, ownAnchors: anchors).rules()
+        let rules = Hardening(environment: environment).rules()
         out += ["", ";; sanity set (last, so it wins)"] + statements(rules)
         out.append("(deny file-link (subpath \"/\"))")
         return out.joined(separator: "\n") + "\n"

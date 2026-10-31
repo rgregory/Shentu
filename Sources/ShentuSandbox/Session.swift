@@ -48,6 +48,7 @@ public enum Session {
             forwardSignals: control.forwardSignals,
             stop: control.stop,
             launch: control.launch,
+            members: { collector.trackedPIDs },
             onLaunch: { collector.attach(ProcessTree(root: $0)) },
             tick: { collector.refresh() }
         )
@@ -74,6 +75,8 @@ private final class Collector: @unchecked Sendable {
     }
 
     var accepted: [SandboxEvent] { lock.withLock { events } }
+
+    var trackedPIDs: Set<pid_t> { lock.withLock { tree }?.trackedPIDs ?? [] }
 
     func attach(_ tree: ProcessTree) {
         let early = lock.withLock {
