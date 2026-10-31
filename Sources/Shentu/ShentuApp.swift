@@ -2,7 +2,7 @@ import AppKit
 import ShentuCore
 import SwiftUI
 
-// Like Menshen.app, UI state lives in @Observable models and views take bindings from
+// Like Shentu.app, UI state lives in @Observable models and views take bindings from
 // `Binding(get:set:)`: SwiftUI's @State needs a compiler plugin the Command Line Tools lack.
 
 /// Apps dropped on the Dock icon (or opened with Shentu) arrive here.

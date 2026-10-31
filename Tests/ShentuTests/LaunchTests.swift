@@ -13,13 +13,13 @@ import Testing
     var app: String { dir + "/Dummy.app" }
     var bundleId: String { "com.example.shentu-dummy-\(tag)" }
     /// Stands in for the run's temp folder when the profile is used without Shentu.launch.
-    var scratch: String { dir + "/menshen-run-test" }
+    var scratch: String { dir + "/shentu-run-test" }
     var drive = ""
 
     init() throws {
         let fm = FileManager.default
         for d in ["/home/Movies", "/home/Pictures", "/home/Documents", "/home/Library/Application Support",
-                  "/Dummy.app/Contents/MacOS", "/menshen-run-test"] {
+                  "/Dummy.app/Contents/MacOS", "/shentu-run-test"] {
             try fm.createDirectory(atPath: dir + d, withIntermediateDirectories: true)
         }
         for f in ["Movies/clip.mp4", "Pictures/photo.jpg", "Documents/private.txt"] {
@@ -59,8 +59,8 @@ import Testing
         return p.terminationStatus
     }
 
-    func env() -> MenshenEnvironment {
-        MenshenEnvironment(home: home, dataRoot: URL(fileURLWithPath: dir + "/data"),
+    func env() -> ShentuEnvironment {
+        ShentuEnvironment(home: home, dataRoot: URL(fileURLWithPath: dir + "/data"),
                            logsRoot: URL(fileURLWithPath: dir + "/logs"), userTempRoot: nil)
     }
 
@@ -171,7 +171,7 @@ import Testing
         let ok = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["tmp"])
         #expect(ok.outcome.status == 0, "TMPDIR is the run's own folder and writable")
         let folder = try #require(ok.tempFolder)
-        #expect(folder.hasPrefix("/private/tmp/menshen-run-"), "\(folder)")
+        #expect(folder.hasPrefix("/private/tmp/shentu-run-"), "\(folder)")
         #expect(!FileManager.default.fileExists(atPath: folder), "deleted when the app quit")
 
         let blocked = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["tmp", "write", dir + "/outside.txt"])

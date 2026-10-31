@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
             const char *tmp = getenv("TMPDIR");
             errno = 0;
             snprintf(path, sizeof path, "%s/probe.txt", tmp ? tmp : "");
-            report("tmp", tmp && strstr(tmp, "menshen-run-") && writefile(path));
+            report("tmp", tmp && strstr(tmp, "shentu-run-") && writefile(path));
         } else if (!strcmp(step, "connect") && i + 1 < argc) {
             int s = socket(AF_INET, SOCK_STREAM, 0);
             struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(atoi(argv[++i])) };

@@ -1,8 +1,8 @@
 import Foundation
-@_exported import MenshenCore
+@_exported import ShentuSandbox
 
 /// What you pick in the pop-up for one launch. Everything else is fixed: writes only to a temp
-/// folder made for this run (deleted when the app quits), no other programs, and Menshen's
+/// folder made for this run (deleted when the app quits), no other programs, and Shentu's
 /// sanity set (secrets, other apps' data, persistence) always blocked.
 public struct LaunchChoice: Codable, Equatable, Sendable {
     /// Internet and local-network connections.
@@ -39,8 +39,8 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
 }
 
 public enum Shentu {
-    /// Shentu keeps its own profiles, logs and remembered choices, apart from Menshen's.
-    public static func environment() -> MenshenEnvironment {
+    /// Shentu keeps its own profiles, logs and remembered choices, apart from Shentu's.
+    public static func environment() -> ShentuEnvironment {
         let lib = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library")
         return .current(dataRoot: lib.appendingPathComponent("Application Support/Shentu"),
                         logsRoot: lib.appendingPathComponent("Logs/Shentu"))
@@ -48,7 +48,7 @@ public enum Shentu {
 
     /// Runs the app confined until it quits. Blocks; call it off the main thread.
     public static func launch(
-        _ app: String, _ choice: LaunchChoice, environment: MenshenEnvironment,
+        _ app: String, _ choice: LaunchChoice, environment: ShentuEnvironment,
         stop: StopHandle? = nil, arguments: [String] = [],
         onRecord: (@Sendable (EnforceRecord) -> Void)? = nil,
         say: @escaping @Sendable (String) -> Void = { _ in }
@@ -65,7 +65,7 @@ public enum Shentu {
 public struct RememberedChoices {
     let url: URL
 
-    public init(_ environment: MenshenEnvironment) {
+    public init(_ environment: ShentuEnvironment) {
         url = environment.dataRoot.appendingPathComponent("choices.json")
     }
 
