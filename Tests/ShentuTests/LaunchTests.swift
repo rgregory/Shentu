@@ -443,6 +443,30 @@ import Testing
         #expect(csv.contains("\"'=cmd \"\"x\"\"\""), "quoted, quotes doubled, formula defused: \(csv)")
     }
 
+    /// The heart monitor's data: quarter-second buckets per group, a per-second rate, and only
+    /// the last two minutes kept.
+    @Test func pulse() {
+        var pulse = Pulse()
+        let t = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        pulse.add(.files, at: t, count: 3)
+        pulse.add(.network, at: t.addingTimeInterval(0.1), count: 2)
+        pulse.add(.files, at: t.addingTimeInterval(0.5), count: 1)
+        let i = Pulse.index(t)
+        #expect(pulse.count(.files, i) == 3 && pulse.count(.network, i) == 2 && pulse.count(nil, i) == 5)
+        #expect(pulse.count(.services, i) == 0 && pulse.count(nil, i + 1) == 0)
+        #expect(pulse.rate(nil, at: t.addingTimeInterval(0.6)) == 6, "everything in the last second")
+        #expect(pulse.rate(nil, at: t.addingTimeInterval(5)) == 0)
+        for s in 0..<1000 { pulse.add(.files, at: t.addingTimeInterval(Double(s)), count: 1) }
+        #expect(pulse.filled <= 960, "old buckets are dropped")
+        pulse.add(.files, at: t, count: 1)
+        #expect(pulse.count(.files, i) == 0, "too old to keep")
+
+        var log = ActivityLog()
+        log.add(EnforceRecord(ts: t, runId: "r", pid: 1, process: "App", verdict: .deny, operation: "network-outbound",
+                              target: "1.2.3.4:443", category: "denied", count: 4))
+        #expect(log.pulse.count(.network, i) == 4, "the activity log feeds the monitor")
+    }
+
     /// Finder's kinds as macOS classifies them here, and none lets code or private keys through.
     @Test func kindsMatchFinder() {
         #expect(FileKind.movie.extensions.contains("mp4") && !FileKind.movie.extensions.contains("mp3"))
