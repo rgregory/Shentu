@@ -18,8 +18,24 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
         }
     }
 
+    /// How files in your home folder and on drives are opened up: by kind, or one by one.
+    public enum Mode: String, Codable, CaseIterable, Sendable {
+        /// Every file of the chosen kinds, anywhere in home and on drives.
+        case kinds
+        /// Only the files and folders you pick (read-only).
+        case items
+
+        public var title: String { self == .kinds ? "By kind" : "Only these" }
+    }
+
     /// Internet and local-network connections.
     public var network = false
+    public var mode = Mode.kinds
+    /// Files and folders it can read when `mode` is `.items`. Absolute paths.
+    public var readPaths: [String] = []
+    /// The one folder it can write to (and read), kept after it quits. Its contents can be
+    /// changed or deleted by the app. Absolute path, or nil.
+    public var outputFolder: String?
     /// File kinds (`FileKind` raw values) readable in your home folder and on drives. Includes
     /// every writable kind.
     public var kinds: [String] = []
@@ -29,8 +45,12 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
     /// nothing is kept.
     public var keepSettings = false
 
-    public init(network: Bool = false, kinds: [FileKind] = [], writeKinds: [FileKind] = [], keepSettings: Bool = false) {
+    public init(network: Bool = false, kinds: [FileKind] = [], writeKinds: [FileKind] = [], keepSettings: Bool = false,
+                mode: Mode = .kinds, readPaths: [String] = [], outputFolder: String? = nil) {
         self.network = network
+        self.mode = mode
+        self.readPaths = readPaths
+        self.outputFolder = outputFolder
         self.writeKinds = writeKinds.map(\.rawValue)
         self.kinds = (kinds + writeKinds.filter { !kinds.contains($0) }).map(\.rawValue)
         self.keepSettings = keepSettings
@@ -43,6 +63,9 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
         kinds = try c.decodeIfPresent([String].self, forKey: .kinds) ?? []
         writeKinds = try c.decodeIfPresent([String].self, forKey: .writeKinds) ?? []
         keepSettings = try c.decodeIfPresent(Bool.self, forKey: .keepSettings) ?? false
+        mode = try c.decodeIfPresent(Mode.self, forKey: .mode) ?? .kinds
+        readPaths = try c.decodeIfPresent([String].self, forKey: .readPaths) ?? []
+        outputFolder = try c.decodeIfPresent(String.self, forKey: .outputFolder)
     }
 
     /// The readable kinds (writable ones included), in Finder's order. Names this version
@@ -70,12 +93,38 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
         if access == .readWrite { writeKinds.append(kind.rawValue) }
     }
 
-    /// The Restricted Sandbox settings for this launch.
+    /// The Restricted Sandbox settings for this launch. File kinds count only in `.kinds` mode,
+    /// picked files and folders only in `.items` mode; the output folder counts in both.
     public var sandbox: RestrictedSandbox {
-        RestrictedSandbox(network: network, otherPrograms: false, ownData: keepSettings,
-                          readFileTypes: fileKinds.flatMap(\.extensions),
-                          writeFileTypes: writableKinds.flatMap(\.extensions),
-                          limitDrives: true, ephemeralTemp: true)
+        let byKind = mode == .kinds
+        return RestrictedSandbox(network: network, otherPrograms: false, ownData: keepSettings,
+                                 readWrite: outputFolder.map { [$0] } ?? [],
+                                 readOnly: byKind ? [] : readPaths,
+                                 readFileTypes: byKind ? fileKinds.flatMap(\.extensions) : [],
+                                 writeFileTypes: byKind ? writableKinds.flatMap(\.extensions) : [],
+                                 limitDrives: true, ephemeralTemp: true)
+    }
+
+    /// Why `path` can't be opened up, or nil if it can. Only things inside your home folder or
+    /// on a drive, never the whole home folder, a whole drive, ~/Library (every app's data), or
+    /// anything inside a sanity-set location (which would stay blocked anyway).
+    public static func problem(with path: String, environment: ShentuEnvironment) -> String? {
+        let real = realPath(environment.expand(path))
+        let home = realPath(environment.home)
+        func within(_ p: String, _ root: String) -> Bool { p == root || p.hasPrefix(root.hasSuffix("/") ? root : root + "/") }
+        if !FileManager.default.fileExists(atPath: real) { return "\(path) doesn't exist." }
+        let parts = real.split(separator: "/")
+        let onDrive = parts.first == "Volumes" && parts.count >= 3
+        if !(within(real, home) && real != home) && !onDrive {
+            return "Choose something inside your home folder or on a drive, not \(real)."
+        }
+        if within(real, home + "/Library") { return "~/Library holds every app's data and settings, so nothing in it can be opened up." }
+        for entry in Hardening.entries where entry.pattern == nil {
+            if within(real, realPath(environment.expand(entry.path))) {
+                return "\(environment.abbreviate(real)) is protected (\(entry.title)) and stays blocked."
+            }
+        }
+        return nil
     }
 }
 
@@ -91,13 +140,20 @@ public enum Shentu {
     public static func launch(
         _ app: String, _ choice: LaunchChoice, environment: ShentuEnvironment,
         stop: StopHandle? = nil, arguments: [String] = [],
+        onLaunch: (@Sendable (pid_t) -> Void)? = nil,
         onRecord: (@Sendable (EnforceRecord) -> Void)? = nil,
         say: @escaping @Sendable (String) -> Void = { _ in }
     ) throws -> EnforceSummary {
+        // Checked again at launch: a remembered folder may have moved, or become a link.
+        let picked = (choice.mode == .items ? choice.readPaths : []) + (choice.outputFolder.map { [$0] } ?? [])
+        for path in picked {
+            if let problem = LaunchChoice.problem(with: path, environment: environment) { throw ShentuError.refused(problem) }
+        }
         var options = EnforceOptions(target: app)
         options.arguments = arguments
         options.control = SessionControl(forwardSignals: false, stop: stop)
         options.onRecord = onRecord
+        options.onLaunch = onLaunch
         return try Enforce.runRestricted(options, sandbox: choice.sandbox, environment: environment, say: say)
     }
 }

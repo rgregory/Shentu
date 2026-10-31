@@ -7,6 +7,7 @@
 //   exec            start /usr/bin/true
 //   helper <path>   fork a child that writes its pid to <path> and sleeps 120 s
 //   sleep <s>       sleep
+//   crash           abort()
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -82,6 +83,9 @@ int main(int argc, char **argv) {
             report("helper", pid > 0);
         } else if (!strcmp(step, "sleep") && i + 1 < argc) {
             sleep(atoi(argv[++i]));
+        } else if (!strcmp(step, "crash")) {
+            fflush(stdout);
+            abort();
         }
     }
     fflush(stdout);
