@@ -48,7 +48,7 @@ public struct LaunchOptions: Sendable {
 }
 
 /// Launches the target under a Seatbelt profile. All launching goes through here so the
-/// deprecated `sandbox-exec` can be swapped for another launcher later (ADR-001).
+/// deprecated `sandbox-exec` can be swapped for another launcher later.
 public enum Runner {
     public struct Outcome: Sendable {
         public var status: Int32

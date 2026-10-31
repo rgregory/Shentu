@@ -1,7 +1,7 @@
 import Foundation
 
 /// Built-in rules that protect credentials, other apps' data and persistence locations.
-/// They are always compiled last, so they override broader learned allows (ADR-003).
+/// They are always compiled last, so they override broader learned allows.
 public struct Hardening: Sendable {
     public enum Protection: Sendable {
         /// Deny reading and writing (credential stores, other apps' data).

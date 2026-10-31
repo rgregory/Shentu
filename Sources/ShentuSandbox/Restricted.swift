@@ -86,7 +86,7 @@ public struct RestrictedSandbox: Codable, Equatable, Sendable {
     }
 
     /// The app's own folders under ~/Library, by bundle ID and by name, and its Darwin cache
-    /// folders (`…/C/<bundle ID>`, `…/0/<bundle ID>`), never the whole Darwin folder (ADR-007).
+    /// folders (`…/C/<bundle ID>`, `…/0/<bundle ID>`), never the whole Darwin folder.
     static func ownFolders(_ target: TargetIdentity, _ environment: ShentuEnvironment) -> [String] {
         let lib = environment.home + "/Library"
         var names = [target.name]
@@ -119,8 +119,8 @@ extension SBPLCompiler {
     /// app runs without learning, then takes away: the network, your home folder (except the folders you chose and
     /// the app's own), writes outside temp and your read & write folders, other programs. The
     /// sanity set comes last so it wins. Every deny carries a filter: a filter-less deny would
-    /// only set the operation's default (ADR-003). The exception is `lsopen`, which the kernel
-    /// checks with no path, so no filter matches it (finding 30).
+    /// only set the operation's default. The exception is `lsopen`, which the kernel
+    /// checks with no path, so no filter matches it.
     /// `scratch` is the run's own temp folder when `box.ephemeralTemp` is on.
     public func restrictedProfile(_ target: ResolvedTarget, _ box: RestrictedSandbox, scratch: String? = nil) -> String {
         let t = target.identity

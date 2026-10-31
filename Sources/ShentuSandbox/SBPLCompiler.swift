@@ -1,7 +1,7 @@
 import Foundation
 
 /// Config → SBPL. Order matters: SBPL lets later matching rules override earlier ones, so the
-/// layout is base → always-on → learned → your rules → hardening → final denies (ADR-003).
+/// layout is base → always-on → learned → your rules → hardening → final denies.
 public struct SBPLCompiler {
     public static let learnProfile = """
         (version 1)
@@ -39,7 +39,7 @@ public struct SBPLCompiler {
             // The memory limit is applied by taskpolicy inside the sandbox, right before the app.
             out.append("(allow file-read* file-map-executable process-exec* (literal \"/usr/sbin/taskpolicy\"))")
         }
-        // launchd and cfprefsd check these in user space, so learning can't see them (ADR-004):
+        // launchd and cfprefsd check these in user space, so learning can't see them:
         // the app's own preferences, plus Apple system services and preferences.
         if let domain = t.bundleId {
             out.append("(allow user-preference-read user-preference-write (preference-domain \(quote(domain))))")
@@ -93,7 +93,7 @@ public struct SBPLCompiler {
             out.append("(allow process-exec* \(own)\(taskpolicy)\(config.logging.exec ? " (with report)" : ""))")
             // Apps, documents and links opened through LaunchServices run outside the sandbox.
             // lsopen is checked with no path, so no filter matches it and this deny has none;
-            // it wins because learned lsopen allows have no filter either (finding 30).
+            // it wins because learned lsopen allows have no filter either.
             out.append("(deny lsopen)")
         }
         return out

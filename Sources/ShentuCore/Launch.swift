@@ -2,7 +2,7 @@ import Foundation
 @_exported import ShentuSandbox
 
 /// What you pick in the pop-up for one launch. Everything else is fixed: writes only to a temp
-/// folder made for this run (deleted when the app quits), no other programs, and Shentu's
+/// folder made for this run (deleted when the app quits), no other programs, and the
 /// sanity set (secrets, other apps' data, persistence) always blocked.
 public struct LaunchChoice: Codable, Equatable, Sendable {
     /// Internet and local-network connections.
@@ -39,7 +39,7 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
 }
 
 public enum Shentu {
-    /// Shentu keeps its own profiles, logs and remembered choices, apart from Shentu's.
+    /// Shentu's profiles, logs and remembered choices, under ~/Library.
     public static func environment() -> ShentuEnvironment {
         let lib = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library")
         return .current(dataRoot: lib.appendingPathComponent("Application Support/Shentu"),
