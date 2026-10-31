@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Blocks you'd notice stand out: saves, opens and deletes of your files, connections and other programs are told apart from the app's background housekeeping (its caches, settings and temp areas). They show as full-height red spikes on the heart monitor, as a red "Blocked: create /path" line with how long ago on the run, and first in Activity, which hides background requests unless Show background is on (`notableBlocks`).
 - Heart monitor: each run shows blocked requests as a live EKG-style trace, spikes scrolling right to left with a per-second rate; the Activity window shows one lead per group (Files, Network, Programs, Services). Flat and grey once the app ends (`pulse`).
 - Output folder: one folder the app can read and change, so its work survives the run, with a warning that it can modify or delete anything there. Inside home or on a drive only; never home itself, a whole drive, ~/Library or a protected place, checked when picked and again at launch (`outputFolderKeepsItsWork`, `picksAreChecked`).
 - "Only these" files and folders as the alternative to file kinds: read-only access to exactly what you pick (`onlyThePickedItems`).

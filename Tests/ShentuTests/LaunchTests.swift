@@ -439,8 +439,38 @@ import Testing
 
         let csv = ActivityLog.csv([ActivityItem(group: .files, operation: "file-read-data", target: "=cmd \"x\"", count: 2,
                                                 processes: ["App"], first: Date(), last: Date())])
-        #expect(csv.hasPrefix("group,operation,target,count,processes,first,last\n"))
+        #expect(csv.hasPrefix("group,operation,target,count,processes,first,last,notable\n"))
         #expect(csv.contains("\"'=cmd \"\"x\"\"\""), "quoted, quotes doubled, formula defused: \(csv)")
+    }
+
+    /// Blocks you'd likely notice (your files, network, programs) are told apart from the app's
+    /// background housekeeping, so a failed save isn't lost among cache writes.
+    @Test func notableBlocks() {
+        #expect(ActivityGroup.isNotable(operation: "file-write-create", target: "/dasdasadaddasasd"), "a save at the top of the disk")
+        #expect(ActivityGroup.isNotable(operation: "file-write-data", target: "~/Documents/report.txt"))
+        #expect(ActivityGroup.isNotable(operation: "network-outbound", target: "1.2.3.4:443"))
+        #expect(ActivityGroup.isNotable(operation: "process-exec*", target: "/bin/sh"))
+        #expect(!ActivityGroup.isNotable(operation: "file-write-create", target: "~/Library/Caches/Sublime Text/Cache/.15d3e0.tmp"))
+        #expect(!ActivityGroup.isNotable(operation: "file-write-data", target: "/private/var/folders/xx/yyyy/C/com.sublimetext.4/functions.list"))
+        #expect(!ActivityGroup.isNotable(operation: "user-preference-write", target: "com.sublimetext.4"))
+        #expect(!ActivityGroup.isNotable(operation: "mach-lookup", target: "com.apple.foo"))
+        #expect(ActivityGroup.verb("file-write-create") == "create" && ActivityGroup.verb("network-outbound") == "connect to")
+
+        let t = Date()
+        var log = ActivityLog()
+        func add(_ op: String, _ target: String, _ at: Date, count: Int = 1) {
+            log.add(EnforceRecord(ts: at, runId: "r", pid: 1, process: "sublime_text", verdict: .deny, operation: op,
+                                  target: target, category: "denied", count: count))
+        }
+        add("file-write-create", "~/Library/Caches/Sublime Text/Cache/.a.tmp", t, count: 500)
+        add("file-write-create", "/dasdasadaddasasd", t.addingTimeInterval(1))
+        add("file-write-create", "~/Library/Caches/Sublime Text/Cache/.b.tmp", t.addingTimeInterval(2), count: 500)
+        #expect(log.latestNotable?.sentence == "create /dasdasadaddasasd", "the save, not the later cache write")
+        #expect(log.notableTotal() == 1 && log.total() == 1001)
+        #expect(log.items(in: nil, matching: "", background: false).map(\.target) == ["/dasdasadaddasasd"], "background hidden")
+        #expect(log.items(in: nil, matching: "").first?.target == "/dasdasadaddasasd", "notable first, even when rarer")
+        #expect(log.pulse.notable(nil, Pulse.index(t.addingTimeInterval(1))) == 1)
+        #expect(log.pulse.notable(nil, Pulse.index(t)) == 0)
     }
 
     /// The heart monitor's data: quarter-second buckets per group, a per-second rate, and only

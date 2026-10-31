@@ -104,6 +104,7 @@ enum RunState: Equatable {
     // The activity viewer's filter.
     var search = ""
     var group: ActivityGroup?
+    var showBackground = false
 
     init(name: String, summary: String, outputFolder: String?) {
         self.name = name
@@ -463,6 +464,21 @@ struct RunRow: View {
                     }
                 }
                 .font(.caption)
+                if let latest = run.activity.latestNotable {
+                    // The last block you'd likely notice (a save, an open, a connection), so a
+                    // failed save in the app isn't lost among background cache writes.
+                    HStack(spacing: 4) {
+                        Label("Blocked: \(latest.sentence)", systemImage: "hand.raised.fill")
+                            .lineLimit(1).truncationMode(.middle)
+                        Text(latest.last, style: .relative).foregroundStyle(.secondary)
+                        Text("ago").foregroundStyle(.secondary)
+                        if run.activity.notableTotal() > latest.count {
+                            Text("· \(run.activity.notableTotal()) noticeable in all").foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption).foregroundStyle(.red)
+                    .help(latest.sentence)
+                }
                 if run.logComplete == false {
                     Label("Logging was incomplete: some blocked requests may be missing.", systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
@@ -488,7 +504,9 @@ struct ActivityView: View {
     let store: Store
     let run: Run
 
-    private var shown: [ActivityItem] { run.activity.items(in: run.group, matching: run.search) }
+    private var shown: [ActivityItem] {
+        run.activity.items(in: run.group, matching: run.search, background: run.showBackground)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -519,10 +537,20 @@ struct ActivityView: View {
                 TextField("Search paths, addresses, services", text: Binding(get: { run.search }, set: { run.search = $0 }))
                     .textFieldStyle(.roundedBorder)
             }
+            HStack {
+                Text("\(run.activity.notableTotal()) you'd likely notice (your files, network, other programs) · \(run.activity.total() - run.activity.notableTotal()) background (its caches, settings, temp files)")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Toggle("Show background", isOn: Binding(get: { run.showBackground }, set: { run.showBackground = $0 }))
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+            }
             if shown.isEmpty {
                 VStack {
                     Spacer()
-                    Text(run.activity.items.isEmpty ? "Nothing was blocked." : "No blocked requests match.")
+                    Text(run.activity.items.isEmpty ? "Nothing was blocked."
+                         : run.showBackground || run.activity.notableTotal() > 0 ? "No blocked requests match."
+                         : "Only background requests were blocked. Turn on Show background to see them.")
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -533,6 +561,7 @@ struct ActivityView: View {
                         .width(min: 44, ideal: 54, max: 70)
                     TableColumn("What") { item in
                         Text(item.target.isEmpty ? "—" : item.target)
+                            .foregroundStyle(item.notable ? Color.red : Color.primary)
                             .font(.system(.body, design: .monospaced))
                             .textSelection(.enabled)
                             .help(item.target)
@@ -574,8 +603,9 @@ struct ActivityView: View {
 }
 
 /// Blocked requests as a heart monitor: each lead is a trace scrolling right to left, with a
-/// spike for every quarter second that had blocks (taller for more, on a log scale). Live
-/// while the app runs; flat and grey from the moment it ends.
+/// spike for every quarter second that had blocks (taller for more, on a log scale). A block
+/// you'd likely notice (a save, an open, a connection) is a full-height red spike with a
+/// marker. Live while the app runs; flat and grey from the moment it ends.
 struct HeartMonitor: View {
     let run: Run
     /// One trace each; nil is all groups together.
@@ -637,12 +667,25 @@ struct HeartMonitor: View {
             let amplitude = laneHeight * 0.52
             let color = Self.color(lead, active: active)
             var trace = Path()
+            var alarms = Path()
+            var markers: [CGPoint] = []
             var pen = CGPoint(x: 0, y: base)
             trace.move(to: pen)
             for i in first...last {
                 let x = CGFloat((Double(i) * bucket - startTime) / span) * size.width
                 let count = pulse.count(lead, i)
-                if count == 0 {
+                if pulse.notable(lead, i) > 0 {
+                    // Full height, drawn again in red on top of the trace.
+                    let a = amplitude
+                    let points = [CGPoint(x: x, y: base), CGPoint(x: x + width * 0.2, y: base + a * 0.15),
+                                  CGPoint(x: x + width * 0.45, y: base - a), CGPoint(x: x + width * 0.7, y: base + a * 0.3),
+                                  CGPoint(x: x + width, y: base)]
+                    for p in points.dropFirst() { trace.addLine(to: p) }
+                    alarms.move(to: points[0])
+                    for p in points.dropFirst() { alarms.addLine(to: p) }
+                    markers.append(CGPoint(x: x + width * 0.45, y: base - a))
+                    pen = points[4]
+                } else if count == 0 {
                     pen = CGPoint(x: x + width, y: base)
                     trace.addLine(to: pen)
                 } else {
@@ -658,6 +701,12 @@ struct HeartMonitor: View {
             // Phosphor glow, then the line itself.
             ctx.stroke(trace, with: .color(color.opacity(0.3)), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
             ctx.stroke(trace, with: .color(color), style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+            let alarm = active ? Color.red : Color.red.opacity(0.6)
+            ctx.stroke(alarms, with: .color(alarm.opacity(0.35)), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+            ctx.stroke(alarms, with: .color(alarm), style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+            for m in markers {
+                ctx.fill(Path(ellipseIn: CGRect(x: m.x - 3, y: m.y - 3, width: 6, height: 6)), with: .color(alarm))
+            }
             if active {
                 let dot = CGRect(x: min(pen.x, size.width) - 3, y: pen.y - 3, width: 6, height: 6)
                 ctx.fill(Path(ellipseIn: dot.insetBy(dx: -2, dy: -2)), with: .color(color.opacity(0.3)))
@@ -666,7 +715,9 @@ struct HeartMonitor: View {
 
             let label = lead?.title ?? "Blocked"
             let total = run.activity.total(lead)
-            ctx.draw(Text("\(label)  \(total)").font(.system(size: 10, weight: .medium)).foregroundColor(color.opacity(0.85)),
+            let notable = run.activity.notableTotal(lead)
+            ctx.draw(Text("\(label)  \(total)").font(.system(size: 10, weight: .medium)).foregroundColor(color.opacity(0.85))
+                     + Text(notable > 0 ? "   \(notable) noticeable" : "").font(.system(size: 10, weight: .semibold)).foregroundColor(alarm),
                      at: CGPoint(x: 8, y: top + 4), anchor: .topLeading)
             if active {
                 ctx.draw(Text("\(pulse.rate(lead, at: end))/s").font(.system(size: 10, weight: .medium).monospacedDigit())

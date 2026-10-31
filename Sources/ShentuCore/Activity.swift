@@ -69,6 +69,43 @@ public enum ActivityGroup: String, CaseIterable, Sendable {
     }
 }
 
+extension ActivityGroup {
+    /// Whether a blocked request is likely something you'd notice (a save, an open, a
+    /// connection, starting a program) rather than the app's background housekeeping: its
+    /// caches, settings and temp areas (~/Library, the per-user Darwin folders, /dev, /tmp)
+    /// and system services. `target` is as logged, with ~ for home.
+    public static func isNotable(operation: String, target: String) -> Bool {
+        switch of(operation) {
+        case .network, .programs: return true
+        case .services: return operation == "appleevent-send"
+        case .files:
+            let background = ["~/Library/", "/private/var/folders/", "/var/folders/", "/dev/", "/private/tmp/",
+                              "/tmp/", "/Library/Caches/", "/private/var/db/"]
+            return target != "~/Library" && !background.contains { target.hasPrefix($0) }
+        }
+    }
+
+    /// Plain words for a blocked operation: "save", "open", "connect to", …
+    public static func verb(_ operation: String) -> String {
+        switch operation {
+        case "file-write-create": return "create"
+        case "file-write-data": return "save"
+        case "file-write-unlink": return "delete"
+        case "file-write-mode", "file-write-owner", "file-write-flags", "file-write-times", "file-write-xattr":
+            return "change"
+        case "network-outbound": return "connect to"
+        case "network-bind", "network-inbound": return "listen on"
+        case "lsopen": return "open"
+        case "appleevent-send": return "control"
+        default:
+            if operation.hasPrefix("file-write") { return "write" }
+            if operation.hasPrefix("file-read") { return "open" }
+            if operation.hasPrefix("process-exec") { return "run" }
+            return operation
+        }
+    }
+}
+
 /// One kind of blocked request: an operation on one target, with how often it happened.
 public struct ActivityItem: Identifiable, Equatable, Sendable {
     public var id: String { "\(operation) \(target)" }
@@ -81,6 +118,11 @@ public struct ActivityItem: Identifiable, Equatable, Sendable {
     public var processes: [String]
     public var first: Date
     public var last: Date
+    /// Likely something you'd notice, not background housekeeping (`ActivityGroup.isNotable`).
+    public var notable: Bool = false
+
+    /// "save /x/report.txt", "connect to 1.2.3.4:443".
+    public var sentence: String { "\(ActivityGroup.verb(operation)) \(target.isEmpty ? "(no target)" : target)" }
 }
 
 /// Blocked requests over time, in quarter-second buckets per group, for the heart-monitor
@@ -89,6 +131,7 @@ public struct Pulse: Equatable, Sendable {
     public static let bucket: TimeInterval = 0.25
     static let keep: Int64 = 480
     private var counts: [Int64: [ActivityGroup: Int]] = [:]
+    private var notables: [Int64: [ActivityGroup: Int]] = [:]
     private var newest: Int64?
 
     public init() {}
@@ -98,14 +141,25 @@ public struct Pulse: Equatable, Sendable {
         Int64((date.timeIntervalSinceReferenceDate / bucket).rounded(.down))
     }
 
-    public mutating func add(_ group: ActivityGroup, at date: Date, count: Int) {
+    public mutating func add(_ group: ActivityGroup, at date: Date, count: Int, notable: Bool = false) {
         let i = Self.index(date)
         if let newest, i <= newest - Self.keep { return }
         counts[i, default: [:]][group, default: 0] += count
+        if notable { notables[i, default: [:]][group, default: 0] += count }
         if newest == nil || i > newest! {
             newest = i
-            if counts.count > Int(Self.keep) * 2 { counts = counts.filter { $0.key > i - Self.keep } }
+            if counts.count > Int(Self.keep) * 2 {
+                counts = counts.filter { $0.key > i - Self.keep }
+                notables = notables.filter { $0.key > i - Self.keep }
+            }
         }
+    }
+
+    /// Notable blocked requests in bucket `i`, for one group or all (nil).
+    public func notable(_ group: ActivityGroup?, _ i: Int64) -> Int {
+        guard let bucket = notables[i] else { return 0 }
+        if let group { return bucket[group] ?? 0 }
+        return bucket.values.reduce(0, +)
     }
 
     /// Blocked requests in bucket `i`, for one group or all (nil).
@@ -129,24 +183,36 @@ public struct Pulse: Equatable, Sendable {
 public struct ActivityLog: Equatable, Sendable {
     public private(set) var items: [ActivityItem] = []
     public private(set) var pulse = Pulse()
+    /// The most recent notable blocked request, if any: shown on the run.
+    public private(set) var latestNotable: ActivityItem?
     private var index: [String: Int] = [:]
 
     public init() {}
 
     public mutating func add(_ record: EnforceRecord) {
         guard record.verdict == .deny else { return }
-        pulse.add(ActivityGroup.of(record.operation), at: record.ts, count: record.count)
+        let notable = ActivityGroup.isNotable(operation: record.operation, target: record.target)
+        pulse.add(ActivityGroup.of(record.operation), at: record.ts, count: record.count, notable: notable)
         let key = "\(record.operation) \(record.target)"
-        if let i = index[key] {
+        let i: Int
+        if let existing = index[key] {
+            i = existing
             items[i].count += record.count
             items[i].last = max(items[i].last, record.ts)
             if !items[i].processes.contains(record.process) { items[i].processes.append(record.process) }
         } else {
-            index[key] = items.count
+            i = items.count
+            index[key] = i
             items.append(ActivityItem(group: ActivityGroup.of(record.operation), operation: record.operation,
                                       target: record.target, count: record.count, processes: [record.process],
-                                      first: record.ts, last: record.ts))
+                                      first: record.ts, last: record.ts, notable: notable))
         }
+        if notable && record.ts >= (latestNotable?.last ?? .distantPast) { latestNotable = items[i] }
+    }
+
+    /// Notable blocked requests in total, or in one group.
+    public func notableTotal(_ group: ActivityGroup? = nil) -> Int {
+        items.filter { $0.notable && (group == nil || $0.group == group) }.reduce(0) { $0 + $1.count }
     }
 
     /// A run's log file (one JSON record per line). Unreadable lines are skipped.
@@ -168,18 +234,22 @@ public struct ActivityLog: Equatable, Sendable {
 
     /// Items in `group` (nil: all) whose target, operation or process contains `search`
     /// (any case), most frequent first.
-    public func items(in group: ActivityGroup?, matching search: String) -> [ActivityItem] {
+    public func items(in group: ActivityGroup?, matching search: String, background: Bool = true) -> [ActivityItem] {
         let needle = search.trimmingCharacters(in: .whitespaces)
         return items.filter { item in
-            (group == nil || item.group == group) && (needle.isEmpty
+            (group == nil || item.group == group) && (background || item.notable) && (needle.isEmpty
                 || item.target.localizedCaseInsensitiveContains(needle)
                 || item.operation.localizedCaseInsensitiveContains(needle)
                 || item.processes.contains { $0.localizedCaseInsensitiveContains(needle) })
         }
-        .sorted { $0.count != $1.count ? $0.count > $1.count : $0.target < $1.target }
+        .sorted { a, b in
+            // Notable first, then most frequent.
+            if a.notable != b.notable { return a.notable }
+            return a.count != b.count ? a.count > b.count : a.target < b.target
+        }
     }
 
-    /// CSV with a header row: group, operation, target, count, processes, first, last.
+    /// CSV with a header row: group, operation, target, count, processes, first, last, notable.
     public static func csv(_ items: [ActivityItem]) -> String {
         let iso = ISO8601DateFormatter()
         func field(_ s: String) -> String {
@@ -188,11 +258,11 @@ public struct ActivityLog: Equatable, Sendable {
             let safe = s.first.map { "=+-@".contains($0) } == true ? "'" + s : s
             return "\"" + safe.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
-        var lines = ["group,operation,target,count,processes,first,last"]
+        var lines = ["group,operation,target,count,processes,first,last,notable"]
         for item in items {
             lines.append([field(item.group.title), field(item.operation), field(item.target), String(item.count),
                           field(item.processes.joined(separator: " ")), iso.string(from: item.first),
-                          iso.string(from: item.last)].joined(separator: ","))
+                          iso.string(from: item.last), item.notable ? "yes" : "no"].joined(separator: ","))
         }
         return lines.joined(separator: "\n") + "\n"
     }
