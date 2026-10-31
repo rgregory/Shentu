@@ -202,6 +202,26 @@ import Testing
         }
     }
 
+    /// Read & Write: files of that kind can be created and changed in home and on drives, and
+    /// nothing else can: other kinds, places outside home and drives, or the sanity set.
+    @Test func writesOnlyTheChosenKinds() throws {
+        try FileManager.default.createDirectory(atPath: home + "/.ssh", withIntermediateDirectories: true)
+        let rw = try profile(LaunchChoice(kinds: [.image], writeKinds: [.movie]))
+        #expect(try can(rw, "write", home + "/Movies/new.mp4"), "a movie in home")
+        #expect(try can(rw, "write", home + "/Movies/clip.mp4"), "changing an existing movie")
+        #expect(try can(rw, "read", home + "/Movies/clip.mp4"), "writable kinds are readable too")
+        #expect(try can(rw, "write", drive + "/new.mp4"), "a movie on a drive")
+        #expect(try can(rw, "read", home + "/Pictures/photo.jpg"), "control: the read-only kind reads")
+        #expect(try !can(rw, "write", home + "/Pictures/new.jpg"), "not the read-only kind")
+        #expect(try !can(rw, "write", home + "/Documents/new.txt"), "not an unchosen kind")
+        #expect(try !can(rw, "write", dir + "/outside.mp4"), "not outside home and drives")
+        #expect(try !can(rw, "write", home + "/.ssh/stolen.mp4"), "not in the sanity set")
+        let rule = try #require(rw.split(separator: "\n").first { $0.hasPrefix("(allow file-write* (require-all (regex") })
+        #expect(try !can(try without(String(rule), rw), "write", home + "/Movies/new2.mp4"),
+                "mutation: without the rule, no movie is written")
+        #expect(try !can(try profile(LaunchChoice(kinds: [.movie])), "write", home + "/Movies/new3.mp4"), "Read alone doesn't write")
+    }
+
     /// The app's name and bundle ID come from its own Info.plist. Neither may open another
     /// app's data or anything in the sanity set, even with "keep its settings" on.
     @Test func appNamesCantReachOtherData() throws {
@@ -340,9 +360,13 @@ import Testing
     @Test func choicesAreRemembered() throws {
         let remembered = RememberedChoices(env())
         #expect(remembered.choice(for: "x") == LaunchChoice(), "strict default for a new app")
-        let choice = LaunchChoice(network: true, kinds: [.image], keepSettings: true)
+        let choice = LaunchChoice(network: true, kinds: [.image], writeKinds: [.text], keepSettings: true)
         remembered.save(choice, for: "x")
         #expect(RememberedChoices(env()).choice(for: "x") == choice)
+        #expect(choice.access(.image) == .read && choice.access(.text) == .readWrite && choice.access(.movie) == .off)
+        // Choices saved before Read & Write existed still load.
+        let old = try JSONDecoder().decode(LaunchChoice.self, from: Data(#"{"network":true,"kinds":["movie"],"keepSettings":false}"#.utf8))
+        #expect(old == LaunchChoice(network: true, kinds: [.movie]))
     }
 }
 

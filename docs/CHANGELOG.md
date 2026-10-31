@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Read & Write per file kind: each kind in the pop-up is Off, Read or Read & Write. Read & Write lets the app create, change, rename and delete files of that kind in your home folder and on drives, nowhere else, and never in the sanity set (`writesOnlyTheChosenKinds`). Remembered choices from before load unchanged.
+
 ### Security
 - The sanity set has no exceptions. Folders the app claims as its own (from the name and bundle ID in its Info.plist) used to override it, so an app calling itself "Slack" could read Slack's sessions, and a name like `../Keychains` reached outside ~/Library. Own folders now use only plain folder names, and the sanity set always wins. Control characters in the name are dropped from the profile's header comment, so a newline can't start a rule (`appNamesCantReachOtherData`).
 - Every run writes its own profile and log, named by time plus a random part. Two runs of the same app used to share one profile file, so one could start under the other's options; logs from the same second overwrote each other (`concurrentRunsKeepTheirOwnProfile`).

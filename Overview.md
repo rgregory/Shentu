@@ -5,9 +5,9 @@ Drop a Mac app on Shentu, choose what it can reach for this run, and it opens in
 | Option in the pop-up | What it means |
 |---|---|
 | Internet and network | Off: no internet or local-network connections. |
-| Files it can open: Archive, Document, Image, Movie, Music, PDF, Presentation, Text | Finder's Kind names. In your home folder and on drives (`/Volumes`), it can open only files of these kinds; hover a checkbox for its extensions. It can see file and folder names. System files and the app itself are always readable. Finder's other kinds aren't offered: Application and Executable are programs, folders are always listable, and Other would mean everything. |
+| Files it can open: Archive, Document, Image, Movie, Music, PDF, Presentation, Text — each Off, Read, or Read & Write | Finder's Kind names. In your home folder and on drives (`/Volumes`), it can open only files of these kinds; hover a name for its extensions. Read & Write also lets it create, change, rename and delete files of that kind there, and nowhere else. Apps that save through a temporary file with another name (NSDocument's safe save) can't save them. It can see file and folder names. System files and the app itself are always readable. Finder's other kinds aren't offered: Application and Executable are programs, folders are always listable, and Other would mean everything. |
 | Keep its settings between runs | Off (the default): no access to its own ~/Library data, and no saved settings, so it starts fresh. On: its folders in ~/Library, found by the name and bundle ID in its Info.plist. Those are the app's own claims, so only plain folder names are used, and the sanity set still wins: an app calling itself Slack doesn't get Slack's data (and the real Slack can't keep its settings in Shentu). |
-| *(always)* | It saves files only to a temporary folder made for this run, which is deleted when it quits. |
+| *(always)* | Any other file it saves goes to a temporary folder made for this run, which is deleted when it quits. |
 | *(always)* | It can't start other programs or open links. A built-in sanity set (secrets, other apps' data, persistence) is always blocked. |
 | *(always)* | Stop, or the app quitting, ends everything it started too. |
 

@@ -20,6 +20,9 @@ public struct RestrictedSandbox: Equatable, Sendable {
     /// File extensions readable anywhere in your home folder (and on drives, with `limitDrives`),
     /// e.g. a `FileKind`'s extensions. Stored as the list itself, so it stays auditable.
     public var readFileTypes: [String] = []
+    /// File extensions also writable (create, change, rename, delete) in your home folder and,
+    /// with `limitDrives`, on drives. Nowhere else, and never in the sanity set.
+    public var writeFileTypes: [String] = []
     /// External drives (`/Volumes`) get the same limits as your home folder: names visible,
     /// contents only for the folders and file types you chose.
     public var limitDrives = false
@@ -30,13 +33,14 @@ public struct RestrictedSandbox: Equatable, Sendable {
 
     public init(network: Bool = false, otherPrograms: Bool = false, ownData: Bool = true,
                 readWrite: [String] = [], readOnly: [String] = [], readFileTypes: [String] = [],
-                limitDrives: Bool = false, ephemeralTemp: Bool = false) {
+                writeFileTypes: [String] = [], limitDrives: Bool = false, ephemeralTemp: Bool = false) {
         self.network = network
         self.otherPrograms = otherPrograms
         self.ownData = ownData
         self.readWrite = readWrite
         self.readOnly = readOnly
         self.readFileTypes = readFileTypes
+        self.writeFileTypes = writeFileTypes
         self.limitDrives = limitDrives
         self.ephemeralTemp = ephemeralTemp
     }
@@ -48,6 +52,7 @@ public struct RestrictedSandbox: Equatable, Sendable {
         parts.append(readWrite.isEmpty ? "writes only to \(temp)" : "writes to \(temp) and \(readWrite.count) folder\(readWrite.count == 1 ? "" : "s")")
         if !readOnly.isEmpty { parts.append("reads \(readOnly.count) more") }
         if !readFileTypes.isEmpty { parts.append("reads \(readFileTypes.count) file type\(readFileTypes.count == 1 ? "" : "s")") }
+        if !writeFileTypes.isEmpty { parts.append("writes \(writeFileTypes.count) file type\(writeFileTypes.count == 1 ? "" : "s")") }
         if limitDrives { parts.append("drives limited") }
         if !otherPrograms { parts.append("no other programs") }
         if !ownData { parts.append("no saved data") }
@@ -162,11 +167,23 @@ extension SBPLCompiler {
         // Everything outside home and drives is readable already, so the regex needs no place.
         // Folders become listable too: without that, the app (and its own Open panel, which
         // runs in-process for unsandboxed apps) couldn't find the files it may read (tested).
-        let types = box.readFileTypes.filter { !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber } }
+        func valid(_ list: [String]) -> [String] { list.filter { !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber } } }
+        let types = valid(box.readFileTypes)
         if !types.isEmpty {
             let filter = filterText(.fileTypes(types.joined(separator: ",")))
             out.append(";; files of the types you chose, and folder listings to find them")
             out.append(statement("allow", ["file-read*"], [filter, "(vnode-type DIRECTORY)"], report: false))
+        }
+        // Writing files of the chosen types, only where reading was closed (home, and drives):
+        // the regex alone would also match /Applications or /Library. A save that goes through
+        // a temporary file with another name (NSDocument's safe save) is still blocked.
+        let writeTypes = valid(box.writeFileTypes)
+        if !writeTypes.isEmpty {
+            let filter = filterText(.fileTypes(writeTypes.joined(separator: ",")))
+            let places = subpaths(closed)
+            let place = places.count == 1 ? places[0] : "(require-any \(places.joined(separator: " ")))"
+            out.append(";; writing files of the types you chose, in your home folder\(box.limitDrives ? " and on drives" : "")")
+            out.append("(allow file-write* (require-all \(filter) \(place)))")
         }
         if !box.otherPrograms {
             out += ["", ";; no other programs, nor apps, documents or links opened through LaunchServices",

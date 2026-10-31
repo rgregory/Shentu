@@ -1,40 +1,81 @@
 import Foundation
 @_exported import ShentuSandbox
 
-/// What you pick in the pop-up for one launch. Everything else is fixed: writes only to a temp
-/// folder made for this run (deleted when the app quits), no other programs, and the
+/// What you pick in the pop-up for one launch. Everything else is fixed: other writes only to
+/// a temp folder made for this run (deleted when the app quits), no other programs, and the
 /// sanity set (secrets, other apps' data, persistence) always blocked.
 public struct LaunchChoice: Codable, Equatable, Sendable {
+    /// What the app may do with one kind of file in your home folder and on drives.
+    public enum Access: String, CaseIterable, Sendable {
+        case off, read, readWrite
+
+        public var title: String {
+            switch self {
+            case .off: return "Off"
+            case .read: return "Read"
+            case .readWrite: return "Read & Write"
+            }
+        }
+    }
+
     /// Internet and local-network connections.
     public var network = false
-    /// File kinds (`FileKind` raw values) readable in your home folder and on drives.
+    /// File kinds (`FileKind` raw values) readable in your home folder and on drives. Includes
+    /// every writable kind.
     public var kinds: [String] = []
+    /// File kinds also writable there: create, change, rename and delete files of that kind.
+    public var writeKinds: [String] = []
     /// The app's own settings, caches and saved state in ~/Library. Off: it starts fresh and
     /// nothing is kept.
     public var keepSettings = false
 
-    public init(network: Bool = false, kinds: [FileKind] = [], keepSettings: Bool = false) {
+    public init(network: Bool = false, kinds: [FileKind] = [], writeKinds: [FileKind] = [], keepSettings: Bool = false) {
         self.network = network
-        self.kinds = kinds.map(\.rawValue)
+        self.writeKinds = writeKinds.map(\.rawValue)
+        self.kinds = (kinds + writeKinds.filter { !kinds.contains($0) }).map(\.rawValue)
         self.keepSettings = keepSettings
     }
 
-    /// The chosen kinds, in Finder's order. Names this version doesn't know are ignored.
-    public var fileKinds: [FileKind] {
-        FileKind.allCases.filter { kinds.contains($0.rawValue) }
+    /// Choices saved before a field existed load with that field's default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        network = try c.decodeIfPresent(Bool.self, forKey: .network) ?? false
+        kinds = try c.decodeIfPresent([String].self, forKey: .kinds) ?? []
+        writeKinds = try c.decodeIfPresent([String].self, forKey: .writeKinds) ?? []
+        keepSettings = try c.decodeIfPresent(Bool.self, forKey: .keepSettings) ?? false
     }
 
-    public func allows(_ kind: FileKind) -> Bool { kinds.contains(kind.rawValue) }
+    /// The readable kinds (writable ones included), in Finder's order. Names this version
+    /// doesn't know are ignored.
+    public var fileKinds: [FileKind] {
+        FileKind.allCases.filter { kinds.contains($0.rawValue) || writeKinds.contains($0.rawValue) }
+    }
 
-    public mutating func set(_ kind: FileKind, _ on: Bool) {
+    /// The writable kinds, in Finder's order.
+    public var writableKinds: [FileKind] {
+        FileKind.allCases.filter { writeKinds.contains($0.rawValue) }
+    }
+
+    public func allows(_ kind: FileKind) -> Bool { access(kind) != .off }
+
+    public func access(_ kind: FileKind) -> Access {
+        if writeKinds.contains(kind.rawValue) { return .readWrite }
+        return kinds.contains(kind.rawValue) ? .read : .off
+    }
+
+    public mutating func set(_ kind: FileKind, _ access: Access) {
         kinds.removeAll { $0 == kind.rawValue }
-        if on { kinds.append(kind.rawValue) }
+        writeKinds.removeAll { $0 == kind.rawValue }
+        if access != .off { kinds.append(kind.rawValue) }
+        if access == .readWrite { writeKinds.append(kind.rawValue) }
     }
 
     /// The Restricted Sandbox settings for this launch.
     public var sandbox: RestrictedSandbox {
         RestrictedSandbox(network: network, otherPrograms: false, ownData: keepSettings,
-                          readFileTypes: fileKinds.flatMap(\.extensions), limitDrives: true, ephemeralTemp: true)
+                          readFileTypes: fileKinds.flatMap(\.extensions),
+                          writeFileTypes: writableKinds.flatMap(\.extensions),
+                          limitDrives: true, ephemeralTemp: true)
     }
 }
 

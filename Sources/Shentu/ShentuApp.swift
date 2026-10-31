@@ -123,8 +123,11 @@ struct Pending: Identifiable {
 
     static func describe(_ choice: LaunchChoice) -> String {
         var parts = [choice.network ? "Network on" : "No network"]
-        let kinds = choice.fileKinds.map(\.title)
-        parts.append(kinds.isEmpty ? "reads none of your files" : "reads " + kinds.joined(separator: ", "))
+        let read = FileKind.allCases.filter { choice.access($0) == .read }.map(\.title)
+        let written = choice.writableKinds.map(\.title)
+        if read.isEmpty && written.isEmpty { parts.append("reads none of your files") }
+        if !read.isEmpty { parts.append("reads " + read.joined(separator: ", ")) }
+        if !written.isEmpty { parts.append("reads & writes " + written.joined(separator: ", ")) }
         parts.append(choice.keepSettings ? "keeps its settings" : "starts fresh")
         return parts.joined(separator: " · ")
     }
@@ -185,8 +188,8 @@ struct OptionsView: View {
         Binding(get: { store.pending?.choice ?? item.choice }, set: { store.pending?.choice = $0 })
     }
 
-    private func kind(_ kind: FileKind) -> Binding<Bool> {
-        Binding(get: { choice.wrappedValue.allows(kind) }, set: { choice.wrappedValue.set(kind, $0) })
+    private func access(_ kind: FileKind) -> Binding<LaunchChoice.Access> {
+        Binding(get: { choice.wrappedValue.access(kind) }, set: { choice.wrappedValue.set(kind, $0) })
     }
 
     var body: some View {
@@ -197,15 +200,22 @@ struct OptionsView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Files it can open in your home folder and on drives:")
-                // Finder's Kind names, in two columns; hover one for the exact extensions.
-                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
-                          alignment: .leading, spacing: 6) {
+                // Finder's Kind names; hover one for the exact extensions.
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                     ForEach(FileKind.allCases, id: \.self) { kind in
-                        Toggle(kind.title, isOn: self.kind(kind))
-                            .help(kind.extensions.map { "." + $0 }.joined(separator: " "))
+                        GridRow {
+                            Text(kind.title)
+                                .help(kind.extensions.map { "." + $0 }.joined(separator: " "))
+                            Picker(kind.title, selection: access(kind)) {
+                                ForEach(LaunchChoice.Access.allCases, id: \.self) { Text($0.title).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 250)
+                        }
                     }
                 }
-                Text("It can see file and folder names, but not other files' contents. System files and the app itself are always readable.")
+                Text("It can see file and folder names, but not other files' contents. System files and the app itself are always readable. Read & Write lets it create, change, rename and delete files of that kind; apps that save through a temporary file can't save them.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -218,7 +228,9 @@ struct OptionsView: View {
 
             Divider()
             VStack(alignment: .leading, spacing: 4) {
-                Label("Saves files only to a temporary folder, deleted when it quits.", systemImage: "trash")
+                Label(choice.wrappedValue.writableKinds.isEmpty
+                      ? "Saves files only to a temporary folder, deleted when it quits."
+                      : "Other files it saves go to a temporary folder, deleted when it quits.", systemImage: "trash")
                 Label("Can't start other programs or open links.", systemImage: "nosign")
             }
             .font(.callout).foregroundStyle(.secondary)
