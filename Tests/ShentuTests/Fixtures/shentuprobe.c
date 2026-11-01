@@ -68,11 +68,33 @@ int main(int argc, char **argv) {
             if (rc == 0) waitpid(pid, NULL, 0);
             errno = rc;
             report("exec", rc == 0);
-        } else if (!strcmp(step, "helper") && i + 1 < argc) {
+        } else if (!strcmp(step, "home")) {
+            const char *home = getenv("HOME");
+            snprintf(path, sizeof path, "%s/home-settings", home ? home : "");
+            report("home", home && writefile(path));
+        } else if (!strcmp(step, "setsid") || !strcmp(step, "setpgid")) {
+            pid_t child = fork();
+            if (child == 0) _exit((!strcmp(step, "setsid") ? setsid() : setpgid(0, 0)) < 0 ? 1 : 0);
+            int status = 0;
+            if (child > 0) waitpid(child, &status, 0);
+            report(step, child > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        } else if (!strcmp(step, "spawn-group")) {
+            posix_spawnattr_t attr;
+            posix_spawnattr_init(&attr);
+            posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+            posix_spawnattr_setpgroup(&attr, 0);
+            pid_t child;
+            char *args[] = { argv[0], NULL };
+            int rc = posix_spawn(&child, argv[0], NULL, &attr, args, environ);
+            if (rc == 0) waitpid(child, NULL, 0);
+            posix_spawnattr_destroy(&attr);
+            report(step, rc == 0);
+        } else if ((!strcmp(step, "helper") || !strcmp(step, "helper-detach")) && i + 1 < argc) {
             const char *pidpath = argv[++i];
             fflush(stdout);
             pid_t pid = fork();
             if (pid == 0) {
+                if (!strcmp(step, "helper-detach")) { setsid(); setpgid(0, 0); }
                 char b[32];
                 int n = snprintf(b, sizeof b, "%d\n", getpid());
                 int fd = open(pidpath, O_CREAT | O_WRONLY | O_TRUNC, 0600);

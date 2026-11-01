@@ -66,8 +66,7 @@ public enum Runner {
     ///   handling, so the GUI passes false.
     /// - `stop`: stops the target and its helpers on request (SIGTERM, then SIGKILL after 5 s).
     /// - `onLaunch` gets the pid (sandbox-exec execs into the target, so it is the target's pid).
-    /// - `members`: pids seen in the target's process tree. Helpers that left the process group
-    ///   (setpgid/setsid) are found here, as long as their parent is still in the run.
+    /// The Restricted profile forbids changing groups, including through posix_spawn.
     /// - `tick` runs every 100 ms while the target is alive.
     public static func run(
         profile: URL,
@@ -77,7 +76,6 @@ public enum Runner {
         forwardSignals: Bool = true,
         stop: StopHandle? = nil,
         launch: LaunchOptions = LaunchOptions(),
-        members: @escaping @Sendable () -> Set<pid_t> = { [] },
         onLaunch: (pid_t) -> Void,
         tick: @escaping @Sendable () -> Void
     ) throws -> Outcome {
@@ -88,7 +86,7 @@ public enum Runner {
 
         let stopped = StopFlag()
         let queue = DispatchQueue(label: "shentu.runner")
-        let started = Child(pid: try spawn(argv, environment: environment), members: members)
+        let started = Child(pid: try spawn(argv, environment: environment))
         var sources: [DispatchSourceSignal] = []
         if forwardSignals {
             signal(SIGINT, SIG_IGN)
@@ -127,6 +125,8 @@ public enum Runner {
         let deadline = Date().addingTimeInterval(2)
         while started.hasLeftovers && Date() < deadline { usleep(50_000) }
         if started.hasLeftovers { started.signalAll(SIGKILL) }
+
+        started.finish()
 
         // Same encoding as Foundation's Process: the exit code, or the signal number.
         let signaled = status & 0x7f != 0
@@ -190,16 +190,13 @@ public enum Runner {
 /// The launched target: the leader of its own process group.
 private final class Child: @unchecked Sendable {
     let pid: pid_t
-    /// Processes started before the target can't be its helpers (guards against pid reuse).
-    private let startedAt = time(nil)
-    private let members: @Sendable () -> Set<pid_t>
     private let lock = NSLock()
     private var exited = false
+    private var finished = false
 
-    init(pid: pid_t, members: @escaping @Sendable () -> Set<pid_t>) {
-        self.pid = pid
-        self.members = members
-    }
+    init(pid: pid_t) { self.pid = pid }
+
+    func finish() { lock.withLock { finished = true } }
 
     var isRunning: Bool { lock.withLock { !exited } }
 
@@ -211,27 +208,12 @@ private final class Child: @unchecked Sendable {
         return status
     }
 
-    /// True while anything from the run is still alive.
-    var hasLeftovers: Bool { kill(-pid, 0) == 0 || !strays().isEmpty }
+    /// The kernel keeps descendants in this group; no stale PID list is used for signaling.
+    var hasLeftovers: Bool { lock.withLock { !finished && kill(-pid, 0) == 0 } }
 
-    /// Signals the process group, plus helpers that left it but still have a parent in the run.
     func signalAll(_ sig: Int32) {
-        kill(-pid, sig)
-        for stray in strays() { kill(stray, sig) }
-    }
-
-    /// Tracked pids outside the group that still belong to this run: started after the target,
-    /// with a parent that is the target or another tracked process.
-    private func strays() -> [pid_t] {
-        let tracked = members()
-        return tracked.filter { candidate in
-            guard candidate != pid else { return false }
-            var info = proc_bsdinfo()
-            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-            guard proc_pidinfo(candidate, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
-            guard time_t(info.pbi_start_tvsec) >= startedAt, pid_t(info.pbi_pgid) != pid else { return false }
-            let parent = pid_t(info.pbi_ppid)
-            return parent == pid || tracked.contains(parent)
+        lock.withLock {
+            if !finished { kill(-pid, sig) }
         }
     }
 }

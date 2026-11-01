@@ -6,11 +6,10 @@ import Foundation
 public struct RestrictedSandbox: Equatable, Sendable {
     /// Internet and local-network connections. Local sockets (logging, DNS) always work.
     public var network = false
-    /// Starting other programs, and having macOS open apps, documents or links. The app's own
-    /// helpers inside its bundle always work.
+    /// Starting other programs, and having macOS open apps, documents or links. Bundled
+    /// helpers can fork/exec; posix_spawn is blocked to prevent group changes.
     public var otherPrograms = false
-    /// The app's own folders in ~/Library (settings, caches, saved state) and in the Darwin
-    /// caches, guessed from its bundle ID and name. Off means it can't keep anything between runs.
+    /// A private home for this app, keyed by canonical bundle path. Shared preferences stay blocked.
     public var ownData = true
     /// The only places outside temp folders it can write, and the only places in your home
     /// folder it can read.
@@ -59,26 +58,9 @@ public struct RestrictedSandbox: Equatable, Sendable {
         return parts.joined(separator: " · ")
     }
 
-    /// The app's own folders under ~/Library, by bundle ID and by name, and its Darwin cache
-    /// folders (`…/C/<bundle ID>`, `…/0/<bundle ID>`), never the whole Darwin folder.
-    /// The name and bundle ID come from the app's own Info.plist, so only plain single folder
-    /// names are used: "../Keychains" or "Google/Chrome" would reach other folders. The sanity
-    /// set is compiled last and still denies anything protected that a plain name points at.
+    /// A private home keyed by canonical bundle path, never by app-supplied names or IDs.
     static func ownFolders(_ target: TargetIdentity, _ environment: ShentuEnvironment) -> [String] {
-        let lib = environment.home + "/Library"
-        let id = target.bundleId.flatMap(plainName)
-        var names = [plainName(target.name)].compactMap { $0 }
-        if let id, !names.contains(id) { names.insert(id, at: 0) }
-        var folders: [String] = []
-        for name in names {
-            folders += ["\(lib)/Application Support/\(name)", "\(lib)/Caches/\(name)", "\(lib)/Logs/\(name)"]
-        }
-        if let id {
-            folders += ["\(lib)/Containers/\(id)", "\(lib)/HTTPStorages/\(id)", "\(lib)/WebKit/\(id)",
-                        "\(lib)/Saved Application State/\(id).savedState", "\(lib)/Preferences/\(id).plist"]
-                + environment.userAppAreas.map { "\($0)/\(id)" }
-        }
-        return folders
+        [environment.isolatedHome(for: target).path]
     }
 
     /// `name` if it is safe as one folder name: letters, digits, space, `.`, `-` and `_`, not
@@ -157,11 +139,8 @@ extension SBPLCompiler {
         if !(rw + own).isEmpty {
             out.append(statement("allow", ["file-write*"], subpaths(rw + own), report: false))
         }
-        if !box.ownData {
-            // cfprefsd writes the app's settings for it, past the file-write rules (tested).
-            out.append(";; no saved settings either: cfprefsd would write them on the app's behalf")
-            out.append("(deny user-preference-write (preference-domain-prefix \"\"))")
-        }
+        // Shared cfprefsd domains are not isolated by HOME or filesystem rules.
+        out.append("(deny user-preference* (preference-domain-prefix \"\"))")
         let readable = [t.path] + rw + ro + own + [home + "/Library/Fonts"]
         out.append(statement("allow", ["file-read*"], subpaths(readable), report: false))
         // Everything outside home and drives is readable already, so the regex needs no place.
@@ -193,6 +172,17 @@ extension SBPLCompiler {
         }
         let rules = Hardening(environment: environment).rules()
         out += ["", ";; sanity set (last, so it wins)"] + statements(rules)
+        // Keep every descendant in the process group created before applying Seatbelt.
+        // posix_spawn can change groups internally without invoking setpgid/setsid.
+        out.append("(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid SYS_posix_spawn))")
+        // Even broad file-kind/output grants must not expose the control plane or other homes.
+        let protected = [realPath(environment.dataRoot.path), realPath(environment.logsRoot.path),
+                         environment.home + "/Library/Application Support/Shentu",
+                         environment.home + "/Library/Logs/Shentu"]
+        for path in Set(protected).sorted() {
+            let exceptions = own.map { "(require-not (subpath \(quote($0))))" }.joined(separator: " ")
+            out.append("(deny file-read* file-write* (require-all (subpath \(quote(path))) \(exceptions)))")
+        }
         out.append("(deny file-link (subpath \"/\"))")
         return out.joined(separator: "\n") + "\n"
     }

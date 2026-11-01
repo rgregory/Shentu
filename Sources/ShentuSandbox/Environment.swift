@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public enum ShentuError: Error, CustomStringConvertible {
     case refused(String)
@@ -51,6 +52,12 @@ public struct ShentuEnvironment: Sendable {
     public static func current(dataRoot: URL, logsRoot: URL) -> ShentuEnvironment {
         ShentuEnvironment(home: NSHomeDirectory(), dataRoot: dataRoot, logsRoot: logsRoot,
                            userTempRoot: darwinUserRoot())
+    }
+
+    /// App metadata cannot select another app's storage or Shentu's control files.
+    public func isolatedHome(for target: TargetIdentity) -> URL {
+        let key = SHA256.hash(data: Data(realPath(target.path).utf8)).map { String(format: "%02x", $0) }.joined()
+        return URL(fileURLWithPath: realPath(dataRoot.path)).appendingPathComponent("homes").appendingPathComponent(key)
     }
 
     public var canaryDir: URL { dataRoot.appendingPathComponent("canary") }
