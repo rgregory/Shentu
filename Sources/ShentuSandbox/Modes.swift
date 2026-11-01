@@ -50,6 +50,18 @@ public enum Enforce {
         }
         defer { if let scratch { try? fm.removeItem(atPath: scratch) } }
 
+        if sandbox.ownData {
+            let home = environment.isolatedHome(for: target.identity)
+            try fm.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            // Refuse a home replaced with a symlink by a previous run.
+            let expected = realPath(environment.dataRoot.path) + "/homes/" + home.lastPathComponent
+            guard realPath(home.path) == expected else {
+                throw ShentuError.refused("the app's isolated home was replaced by a symbolic link")
+            }
+            control.launch.environment["HOME"] = expected
+            control.launch.environment["CFFIXED_USER_HOME"] = expected
+        }
+
         let text = SBPLCompiler(environment: environment).restrictedProfile(target, sandbox, scratch: scratch)
         if let error = SBPLCompiler.validate(text) {
             throw ShentuError.failed("the Restricted Sandbox profile doesn't load:\n\(error)")

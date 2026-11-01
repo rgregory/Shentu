@@ -169,7 +169,7 @@ import Testing
     }
 
     @Test func keepSettings() throws {
-        let folder = "\(home)/Library/Application Support/\(bundleId)"
+        let folder = env().isolatedHome(for: try ResolvedTarget.resolve(app).identity).path
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         let fresh = try profile(LaunchChoice())
         #expect(try can(fresh, "write", scratch + "/f"), "control: its temp folder")
@@ -181,7 +181,7 @@ import Testing
         let strict = try profile(LaunchChoice(network: true, kinds: FileKind.allCases, keepSettings: true))
         #expect(try can(strict, "write", scratch + "/f"), "control: the app itself runs")
         #expect(try !can(strict, "exec"), "even with every option on, no other programs")
-        #expect(try can(try without("(deny process-exec* (subpath \"/\"))", strict), "exec"), "mutation: the rule is what blocks it")
+        #expect(try can(try without("(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid SYS_posix_spawn))", try without("(deny process-exec* (subpath \"/\"))", strict)), "exec"), "mutation: the rule is what blocks it")
     }
 
     /// The real launch path (log tap, temp folder, launch, cleanup): the app gets its own TMPDIR,
@@ -235,14 +235,14 @@ import Testing
 
         let slack = try bundle("NotSlack", name: "Slack", id: "com.example.notslack-\(tag)")
         let exe = slack + "/Contents/MacOS/Dummy"
-        let ownFolder = "\(home)/Library/Application Support/com.example.notslack-\(tag)"
+        let ownFolder = env().isolatedHome(for: try ResolvedTarget.resolve(slack).identity).path
         try fm.createDirectory(atPath: ownFolder, withIntermediateDirectories: true)
         let named = try profile(keep, app: slack)
         #expect(try can(named, as: exe, ["write", ownFolder + "/settings"]), "control: its own folder, by bundle ID")
         #expect(try !can(named, as: exe, ["read", slackData + "/session"]), "calling itself Slack doesn't open Slack's data")
         // The sanity set is last, so the last mention of Slack's folder is its deny.
-        var mutated = named
-        mutated.removeSubrange(try #require(named.range(of: "\n    (subpath \"\(slackData)\")", options: .backwards)))
+        var mutated = named.replacingOccurrences(of: ";; sanity set (last, so it wins)", with: "(allow file-read* (subpath \"\(slackData)\"))\n;; sanity set (last, so it wins)")
+        mutated.removeSubrange(try #require(mutated.range(of: "\n    (subpath \"\(slackData)\")", options: .backwards)))
         #expect(try can(mutated, as: exe, ["read", slackData + "/session"]), "mutation: the sanity set's Slack rule is what blocks it")
 
         let sneaky = try bundle("Sneaky", name: "../../.ssh", id: "../../.ssh")
@@ -257,6 +257,43 @@ import Testing
         #expect(RestrictedSandbox.plainName("Google/Chrome") == nil && RestrictedSandbox.plainName("..") == nil
                 && RestrictedSandbox.plainName(".hidden") == nil && RestrictedSandbox.plainName("My App 2") == "My App 2")
         #expect(Hardening(environment: env()).rules().allSatisfy { $0.action == .deny }, "the sanity set has no exceptions")
+    }
+
+    @Test func isolatedHomesDoNotTrustNames() throws {
+        let impostor = try bundle("Impostor", name: "Shentu", id: "dev.shentu.app")
+        let target = try ResolvedTarget.resolve(impostor)
+        let own = env().isolatedHome(for: target.identity).path
+        let foreign = env().isolatedHome(for: try ResolvedTarget.resolve(app).identity).path
+        let controls = [home + "/Library/Application Support/Shentu", home + "/Library/Logs/Shentu",
+                        env().dataRoot.path, env().logsRoot.path, foreign,
+                        home + "/Library/Application Support/UnlistedApp"]
+        for folder in controls + [own] {
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+            try "secret".write(toFile: folder + "/settings.txt", atomically: true, encoding: .utf8)
+        }
+        let choice = LaunchChoice(kinds: [.text], writeKinds: [.text], keepSettings: true)
+        let policy = try profile(choice, app: impostor)
+        let exe = target.identity.executable
+        for folder in controls.dropLast() {
+            #expect(try !can(policy, as: exe, ["read", folder + "/settings.txt"]), "control data stays closed")
+            #expect(try !can(policy, as: exe, ["write", folder + "/settings.txt"]), "control data stays immutable")
+        }
+        #expect(try can(policy, as: exe, ["write", own + "/settings.txt"]), "isolated storage works")
+        let unlisted = try bundle("UnlistedImpostor", name: "UnlistedApp", id: "org.unlisted")
+        #expect(try !can(try profile(LaunchChoice(keepSettings: true), app: unlisted),
+                        as: unlisted + "/Contents/MacOS/Dummy", ["read", controls.last! + "/settings.txt"]))
+        let result = try Shentu.launch(impostor, LaunchChoice(keepSettings: true), environment: env(), arguments: ["home"])
+        #expect(result.outcome.status == 0)
+        #expect(FileManager.default.fileExists(atPath: own + "/home-settings"))
+    }
+
+    @Test func helpersCannotLeaveTheirGroup() throws {
+        let policy = try profile(LaunchChoice())
+        let mutation = try without("(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid SYS_posix_spawn))", policy)
+        for operation in ["setsid", "setpgid", "spawn-group"] {
+            #expect(try !can(policy, operation), "group escape must be blocked: \(operation)")
+            #expect(try can(mutation, operation), "control: escape works without restriction")
+        }
     }
 
     /// Two runs at once, with different choices: each gets its own profile (writing a shared
@@ -329,12 +366,12 @@ import Testing
     }
 
     /// Helpers don't outlive the app when it quits by itself.
-    @Test func helpersEndWithTheApp() throws {
+    @Test(arguments: ["helper", "helper-detach"]) func helpersEndWithTheApp(_ helperStep: String) throws {
         let out = dir + "/out2"
         try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
         let pidfile = out + "/helper.pid"
         var options = EnforceOptions(target: app)
-        options.arguments = ["helper", pidfile]
+        options.arguments = [helperStep, pidfile]
         options.control = SessionControl()
         let summary = try Enforce.runRestricted(options, sandbox: RestrictedSandbox(readWrite: [out], ephemeralTemp: true),
                                                 environment: env())

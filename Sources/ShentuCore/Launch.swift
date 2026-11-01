@@ -41,8 +41,7 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
     public var kinds: [String] = []
     /// File kinds also writable there: create, change, rename and delete files of that kind.
     public var writeKinds: [String] = []
-    /// The app's own settings, caches and saved state in ~/Library. Off: it starts fresh and
-    /// nothing is kept.
+    /// Keep a private home keyed by the app's canonical path. Shared preferences stay blocked.
     public var keepSettings = false
 
     public init(network: Bool = false, kinds: [FileKind] = [], writeKinds: [FileKind] = [], keepSettings: Bool = false,

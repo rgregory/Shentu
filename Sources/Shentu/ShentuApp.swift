@@ -225,7 +225,7 @@ enum RunState: Equatable {
             parts.append(n == 0 ? "reads none of your files" : "reads \(n) item\(n == 1 ? "" : "s") you picked")
         }
         if let out = choice.outputFolder { parts.append("writes to \(environment.abbreviate(out))") }
-        parts.append(choice.keepSettings ? "keeps its settings" : "starts fresh")
+        parts.append(choice.keepSettings ? "keeps isolated data" : "no saved-data access")
         return parts.joined(separator: " · ")
     }
 }
@@ -325,8 +325,8 @@ struct OptionsView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Toggle("Keep its settings between runs", isOn: choice.keepSettings)
-                Text("Off: it starts fresh every time and nothing is saved.")
+                Toggle("Keep its isolated data between runs", isOn: choice.keepSettings)
+                Text("Uses a separate home folder. Shared macOS preferences stay blocked. Apps that ignore this folder cannot save settings.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

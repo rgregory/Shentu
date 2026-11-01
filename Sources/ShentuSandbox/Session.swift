@@ -49,7 +49,6 @@ public enum Session {
             forwardSignals: control.forwardSignals,
             stop: control.stop,
             launch: control.launch,
-            members: { collector.trackedPIDs },
             onLaunch: { pid in
                 collector.attach(ProcessTree(root: pid))
                 onLaunch?(pid)
