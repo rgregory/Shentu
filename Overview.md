@@ -2,16 +2,35 @@
 
 Drop a Mac app on Shentu, choose what it can reach for this run, and it opens in a seatbelt sandbox.
 
-| Option in the pop-up | What it means |
-|---|---|
-| Internet and network | Off: no internet or local-network connections. |
-| Files it can open: **By kind** | Archive, Document, Image, Movie, Music, PDF, Presentation, Text (Finder's Kind names), each Off, Read, or Read & Write. Every file of that kind in your home folder and on drives (`/Volumes`); hover a name for its extensions. Read & Write also lets it create, change, rename and delete files of that kind there, and nowhere else. Apps that save through a temporary file with another name (NSDocument's safe save) can't save them. It can see file and folder names. System files and the app itself are always readable. Code, scripts and Finder's other kinds (Application, Executable, Other) aren't offered. |
-| Files it can open: **Only these** | Just the files and folders you pick, read-only (a folder includes everything inside it). Less access than a kind, which opens every matching file you have. |
-| Output folder | Optional. One folder it can read, change and delete anything in, so its work survives the run. Must be inside your home folder or on a drive; never your whole home folder, a whole drive, ~/Library, or a protected place. Checked again at every launch. |
-| Keep its isolated data between runs | On: supplies a private home folder keyed by the app's canonical path through HOME and CFFIXED_USER_HOME. Existing app data and shared macOS preference domains remain blocked. Apps that ignore this folder cannot save settings. Off: no access to this persistent storage. Explicit output-folder and file-kind write grants still apply. |
-| *(always)* | Any other file it saves goes to a temporary folder made for this run, which is deleted when it quits. |
-| *(always)* | It can't start other programs or open links. A built-in sanity set (secrets, other apps' data, persistence) is always blocked. |
-| *(always)* | Stop, or the app quitting, ends everything it started too. |
+## What you choose
+
+**Internet and network.** Off means no internet or local-network connections.
+
+**Files it can open — by kind.** Archive, Document, Image, Movie, Music, PDF, Presentation and Text (Finder's Kind names), each set to Off, Read, or Read & Write. Hover a name for its extensions.
+
+- Read opens every file of that kind in your home folder and on drives (`/Volumes`).
+- Read & Write also lets it create, change, rename and delete files of that kind there, and nowhere else.
+- Apps that save through a temporary file with another name (NSDocument's safe save) can't save them.
+- It can see file and folder names. System files and the app itself are always readable.
+- Code, scripts and Finder's other kinds (Application, Executable, Other) aren't offered.
+
+**Files it can open — only these.** Just the files and folders you pick, read-only (a folder includes everything inside it). Less access than a kind, which opens every matching file you have.
+
+**Output folder.** Optional. One folder it can read, change and delete anything in, so its work survives the run. It must be inside your home folder or on a drive, and can't be your whole home folder, a whole drive, `~/Library`, or a protected place. Checked again at every launch.
+
+**Keep its isolated data between runs.**
+
+- On: the app gets a private home folder of its own, keyed by its path on disk (through `HOME` and `CFFIXED_USER_HOME`). Its existing data elsewhere and shared macOS preferences stay blocked. Apps that ignore this folder can't save settings.
+- Off: no persistent storage. The output folder and Read & Write kinds still apply.
+
+## Always on
+
+- Any other file it saves goes to a temporary folder made for this run, deleted when it quits.
+- It can't start other programs or open links.
+- A built-in sanity set (secrets, other apps' data, persistence) is always blocked.
+- Stop, or the app quitting, ends everything it started too.
+
+## Runs and activity
 
 Your choices are remembered per app.
 
