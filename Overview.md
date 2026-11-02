@@ -1,6 +1,6 @@
 # Shentu
 
-Drop a Mac app on Shentu, choose what it can reach for this run, and it opens in a seatbelt sandbox.
+Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 
 ## What you choose
 
@@ -27,6 +27,7 @@ Drop a Mac app on Shentu, choose what it can reach for this run, and it opens in
 
 - Any other file it saves goes to a temporary folder made for this run, deleted when it quits.
 - It can't start other programs or open links.
+- It can't connect to Unix-domain sockets (Docker's, ssh-agent's, other apps'), except the system log, and DNS when the network is on.
 - A built-in sanity set (secrets, other apps' data, persistence) is always blocked.
 - Stop, or the app quitting, ends everything it started too.
 

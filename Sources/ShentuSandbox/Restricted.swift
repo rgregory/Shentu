@@ -119,6 +119,14 @@ extension SBPLCompiler {
                     "(deny network-outbound (remote ip))",
                     "(deny network-bind network-inbound (local ip))"]
         }
+        // Unix-domain sockets are a way out, not files: connecting is network-outbound, so the
+        // file rules below don't cover it and "no network" (remote ip) doesn't either. Docker's
+        // socket would let the app mount your home folder in a container, ssh-agent's signs as
+        // you. Closed whatever the network choice; only syslog, and DNS when the network is on.
+        out += ["", ";; no Unix-domain sockets but syslog\(box.network ? " and DNS" : "")",
+                "(deny network-outbound (remote unix-socket))",
+                "(allow network-outbound (literal \"/private/var/run/syslog\"))"]
+        if box.network { out.append("(allow network-outbound (literal \"/private/var/run/mDNSResponder\"))") }
         // Order: no writes anywhere, then temp; then nothing in home (whatever the earlier lines
         // allowed); then only your folders and the app's own. Allows use the same wildcard
         // `file-read*` as the sanity set's denies: a rule naming a specific operation
