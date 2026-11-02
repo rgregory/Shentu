@@ -316,12 +316,9 @@ struct OptionsView: View {
                 HStack {
                     Text("Files it can open in your home folder and on drives:")
                     Spacer()
-                    Picker("Access", selection: choice.mode) {
-                        ForEach(LaunchChoice.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
+                    LookSegmented(selection: choice.mode,
+                                  options: LaunchChoice.Mode.allCases.map { ($0, $0.title) })
+                        .fixedSize()
                 }
                 if choice.wrappedValue.mode == .kinds { kinds } else { items }
             }
@@ -373,12 +370,9 @@ struct OptionsView: View {
                     GridRow {
                         Text(kind.title)
                             .help(kind.extensions.map { "." + $0 }.joined(separator: " "))
-                        Picker(kind.title, selection: access(kind)) {
-                            ForEach(LaunchChoice.Access.allCases, id: \.self) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 250)
+                        LookSegmented(selection: access(kind),
+                                      options: LaunchChoice.Access.allCases.map { ($0, $0.title) })
+                            .frame(width: 250)
                     }
                 }
             }
@@ -538,15 +532,10 @@ struct ActivityView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Picker("Group", selection: Binding(get: { run.group }, set: { run.group = $0 })) {
-                    Text("All \(run.activity.total())").tag(ActivityGroup?.none)
-                    ForEach(ActivityGroup.allCases, id: \.self) { group in
-                        Text("\(group.title) \(run.activity.total(group))").tag(Optional(group))
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                LookSegmented(selection: Binding(get: { run.group }, set: { run.group = $0 }),
+                              options: [(ActivityGroup?.none, "All \(run.activity.total())")]
+                                + ActivityGroup.allCases.map { (Optional($0), "\($0.title) \(run.activity.total($0))") })
+                    .fixedSize()
                 TextField("Search paths, addresses, services", text: Binding(get: { run.search }, set: { run.search = $0 }))
                     .textFieldStyle(.roundedBorder)
             }
@@ -555,7 +544,6 @@ struct ActivityView: View {
                     .font(Look.font(.caption)).foregroundStyle(.secondary)
                 Spacer()
                 Toggle("Show background", isOn: Binding(get: { run.showBackground }, set: { run.showBackground = $0 }))
-                    .toggleStyle(.checkbox)
                     .font(Look.font(.caption))
             }
             if shown.isEmpty {

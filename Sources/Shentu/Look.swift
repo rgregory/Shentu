@@ -55,13 +55,73 @@ extension View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Window-level look: off-white background, black text, light appearance.
+    /// Window-level look: off-white background, black text, light appearance. Buttons and
+    /// checkboxes inside take the Retro style unless they set their own.
     func lookWindow() -> some View {
         self
+            .buttonStyle(LookButtonStyle())
+            .toggleStyle(LookCheckbox())
             .font(Look.font(.body))
             .foregroundStyle(Look.text)
             .tint(Look.accent)
             .background(Look.desktop)
             .preferredColorScheme(.light)
+    }
+}
+
+// MARK: Controls
+
+/// Square checkbox: 2-px black border, black tick when on.
+struct LookCheckbox: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.white)
+                    .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.black, lineWidth: 2))
+                    .overlay {
+                        if configuration.isOn {
+                            Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy)).foregroundColor(.black)
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                configuration.label
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Segmented control: one bordered strip with a hard shadow; the chosen segment is black.
+struct LookSegmented<T: Hashable>: View {
+    @Binding var selection: T
+    /// (value, label) pairs, in order.
+    let options: [(T, String)]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(options.enumerated()), id: \.offset) { i, o in
+                let on = o.0 == selection
+                if i > 0 { Rectangle().fill(Color.black).frame(width: 2) }
+                Button { selection = o.0 } label: {
+                    Text(o.1)
+                        .font(Look.font(.callout).weight(on ? .semibold : .regular))
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(on ? .white : .black)
+                        .background(on ? Color.black : Color.white)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.black, lineWidth: 2))
+        .compositingGroup()
+        .shadow(color: .black, radius: 0, x: 2, y: 2)
     }
 }
