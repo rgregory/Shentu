@@ -127,6 +127,14 @@ extension SBPLCompiler {
                 "(deny network-outbound (remote unix-socket))",
                 "(allow network-outbound (literal \"/private/var/run/syslog\"))"]
         if box.network { out.append("(allow network-outbound (literal \"/private/var/run/mDNSResponder\"))") }
+        // Mach services are a way out too: a container engine's API (Apple's `container` runs as
+        // com.apple.container.*) can mount your home folder, a third-party privileged helper
+        // acts as root. Only Apple's services stay reachable, minus the container engine, plus
+        // XPC services inside the app's own bundle (by xpc-service-name, which only resolves there).
+        out += ["", ";; Mach services: Apple's only, not the container engine",
+                "(deny mach-lookup (require-not (global-name-prefix \"com.apple.\")))",
+                "(deny mach-lookup (global-name-prefix \"com.apple.container.\"))",
+                "(allow mach-lookup (xpc-service-name-prefix \"\"))"]
         // Order: no writes anywhere, then temp; then nothing in home (whatever the earlier lines
         // allowed); then only your folders and the app's own. Allows use the same wildcard
         // `file-read*` as the sanity set's denies: a rule naming a specific operation

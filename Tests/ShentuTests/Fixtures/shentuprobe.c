@@ -5,6 +5,7 @@
 //   tmp             write a file in $TMPDIR, which must be this run's own temp folder
 //   connect <port>  TCP connect to 127.0.0.1:<port>
 //   unix <path>     connect to a Unix-domain socket
+//   mach <name>     look up a Mach service; prints "mach status <kern_return_t>"
 //   ae <pid>        send the process an Apple Event it doesn't handle (no reply, never interact,
 //                   so no consent prompt) and print "ae status <OSStatus>"
 //   exec            start /usr/bin/true
@@ -16,6 +17,7 @@
 #include <CoreServices/CoreServices.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
+#include <servers/bootstrap.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
@@ -75,6 +77,10 @@ int main(int argc, char **argv) {
             strncpy(addr.sun_path, argv[++i], sizeof addr.sun_path - 1);
             report("unix", s >= 0 && connect(s, (struct sockaddr *)&addr, sizeof addr) == 0);
             if (s >= 0) close(s);
+        } else if (!strcmp(step, "mach") && i + 1 < argc) {
+            mach_port_t port = MACH_PORT_NULL;
+            kern_return_t kr = bootstrap_look_up(bootstrap_port, argv[++i], &port);
+            printf("mach status %d\n", kr);
         } else if (!strcmp(step, "ae") && i + 1 < argc) {
             pid_t pid = atoi(argv[++i]);
             dlopen("/System/Library/Frameworks/CoreServices.framework/CoreServices", RTLD_NOW);
