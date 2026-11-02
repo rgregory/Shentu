@@ -29,6 +29,7 @@ struct ShentuApp: App {
         WindowGroup("Shentu") {
             MainView(store: store)
                 .frame(minWidth: 480, minHeight: 440)
+                .lookWindow()
                 .onAppear { delegate.store = store }
         }
     }
@@ -240,14 +241,17 @@ struct MainView: View {
                     OptionsView(store: store, item: item)
                 }
             if !store.runs.isEmpty {
-                List(store.runs) { RunRow(store: store, run: $0) }
-                    .listStyle(.inset)
+                List(store.runs) { RunRow(store: store, run: $0).listRowBackground(Look.panel) }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .lookPanel(padding: 4)
                     .sheet(item: Binding(get: { store.viewing }, set: { store.viewing = $0 })) { run in
                         ActivityView(store: store, run: run)
                     }
             }
         }
         .padding(20)
+        .frame(maxHeight: .infinity, alignment: .top)
         .alert("Shentu", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) {
             Button("OK") {}
         } message: {
@@ -265,13 +269,14 @@ struct DropZone: View {
             Image(nsImage: NSApplication.shared.applicationIconImage)
                 .resizable()
                 .frame(width: 72, height: 72)
-            Text("Drop a Mac app here").font(.title3)
+            Text("Drop a Mac app here").font(Look.font(.title3))
             Text("You choose what it can reach, then it opens in a sandbox.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(Look.font(.callout)).foregroundStyle(.secondary)
             Button("Choose an App…") { store.choose() }
+                .buttonStyle(LookButtonStyle(isDefault: true))
         }
         .frame(maxWidth: .infinity, minHeight: 180)
-        .background(RoundedRectangle(cornerRadius: 12).strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [6])).foregroundStyle(.tertiary))
+        .lookPanel(padding: 0)
         .dropDestination(for: URL.self) { urls, _ in
             store.dropped(urls)
             return true
@@ -298,9 +303,14 @@ struct OptionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Open \(item.name) in Shentu").font(.headline)
+            Text("Open \(item.name) in Shentu").lookHeader()
 
-            Toggle("Internet and network", isOn: choice.network)
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Internet and network", isOn: choice.network)
+                Text("Off blocks the internet, the local network and servers on this Mac (localhost), and it can't accept connections. Either way, it can't reach other apps' sockets, such as Docker's or ssh-agent's; only system logging is allowed.")
+                    .font(Look.font(.caption)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -320,14 +330,14 @@ struct OptionsView: View {
 
             if let problem = current.problem {
                 Label(problem, systemImage: "xmark.octagon")
-                    .font(.caption).foregroundStyle(.red)
+                    .font(Look.font(.caption)).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Keep its isolated data between runs", isOn: choice.keepSettings)
                 Text("Uses a separate home folder. Shared macOS preferences stay blocked. Apps that ignore this folder cannot save settings.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Look.font(.caption)).foregroundStyle(.secondary)
             }
 
             Divider()
@@ -337,18 +347,21 @@ struct OptionsView: View {
                       : "Anything else it saves goes to a temporary folder, deleted when it quits.", systemImage: "trash")
                 Label("Can't start other programs or open links.", systemImage: "nosign")
             }
-            .font(.callout).foregroundStyle(.secondary)
+            .font(Look.font(.callout)).foregroundStyle(.secondary)
 
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { store.pending = nil }
                     .keyboardShortcut(.cancelAction)
+                    .buttonStyle(LookButtonStyle())
                 Button("Open") { store.launch(current) }
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(LookButtonStyle(isDefault: true))
             }
         }
         .padding(20)
         .frame(width: 480)
+        .lookWindow()
     }
 
     /// Off / Read / Read & Write for each of Finder's kinds.
@@ -370,7 +383,7 @@ struct OptionsView: View {
                 }
             }
             Text("Every file of a chosen kind, anywhere in your home folder and on drives. It can see file and folder names, but not other files' contents. Read & Write lets it create, change, rename and delete files of that kind; apps that save through a temporary file can't save them.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(Look.font(.caption)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -397,7 +410,7 @@ struct OptionsView: View {
             }
             Button("Add Files or Folders…") { store.addReadItems() }
             Text("Read-only, and only these: a folder includes everything inside it. Less access than a file kind, which opens every matching file you have.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(Look.font(.caption)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -422,11 +435,11 @@ struct OptionsView: View {
             if choice.wrappedValue.outputFolder != nil {
                 Label("It can read, change and delete anything in this folder. What it saves there stays after it quits.",
                       systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(Look.font(.caption)).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("A folder whose contents it may change, so its work isn't lost when it quits.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Look.font(.caption)).foregroundStyle(.secondary)
             }
         }
     }
@@ -453,8 +466,8 @@ struct RunRow: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(run.name).font(.headline)
-                Text(run.summary).font(.caption).foregroundStyle(.secondary)
+                Text(run.name).font(Look.font(.headline))
+                Text(run.summary).font(Look.font(.caption)).foregroundStyle(.secondary)
                 HStack(spacing: 6) {
                     Label(run.state.title, systemImage: run.state.symbol)
                         .foregroundStyle(run.state.color)
@@ -463,7 +476,7 @@ struct RunRow: View {
                         Text("· \(run.activity.total()) blocked").foregroundStyle(.secondary)
                     }
                 }
-                .font(.caption)
+                .font(Look.font(.caption))
                 if let latest = run.activity.latestNotable {
                     // The last block you'd likely notice (a save, an open, a connection), so a
                     // failed save in the app isn't lost among background cache writes.
@@ -476,24 +489,24 @@ struct RunRow: View {
                             Text("· \(run.activity.notableTotal()) noticeable in all").foregroundStyle(.secondary)
                         }
                     }
-                    .font(.caption).foregroundStyle(.red)
+                    .font(Look.font(.caption)).foregroundStyle(.red)
                     .help(latest.sentence)
                 }
                 if run.logComplete == false {
                     Label("Logging was incomplete: some blocked requests may be missing.", systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(Look.font(.caption)).foregroundStyle(.orange)
                 }
             }
             Spacer()
             if run.state.isActive {
-                Button("Stop") { run.stop.stop() }
+                Button("Stop") { run.stop.stop() }.buttonStyle(LookButtonStyle())
             }
             if let out = run.outputFolder {
-                Button("Output") { NSWorkspace.shared.open(URL(fileURLWithPath: out)) }
+                Button("Output") { NSWorkspace.shared.open(URL(fileURLWithPath: out)) }.buttonStyle(LookButtonStyle())
                     .help("Open \(store.environment.abbreviate(out)) in Finder")
             }
             if run.logURL != nil {
-                Button("Activity") { store.viewing = run }
+                Button("Activity") { store.viewing = run }.buttonStyle(LookButtonStyle())
             }
         }
     }
@@ -511,17 +524,17 @@ struct ActivityView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("\(run.name): blocked requests").font(.headline)
+                Text("\(run.name): blocked requests").font(Look.font(.headline))
                 Spacer()
                 Label(run.state.title, systemImage: run.state.symbol)
-                    .font(.caption).foregroundStyle(run.state.color)
+                    .font(Look.font(.caption)).foregroundStyle(run.state.color)
             }
             HeartMonitor(run: run, leads: ActivityGroup.allCases.map { Optional($0) }, span: 60)
                 .frame(height: 150)
             if run.logComplete == false {
                 Label("Logging was incomplete: the system log dropped messages or the final check didn't arrive, so some blocked requests may be missing.",
                       systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(Look.font(.caption)).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -539,11 +552,11 @@ struct ActivityView: View {
             }
             HStack {
                 Text("\(run.activity.notableTotal()) you'd likely notice (your files, network, other programs) · \(run.activity.total() - run.activity.notableTotal()) background (its caches, settings, temp files)")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Look.font(.caption)).foregroundStyle(.secondary)
                 Spacer()
                 Toggle("Show background", isOn: Binding(get: { run.showBackground }, set: { run.showBackground = $0 }))
                     .toggleStyle(.checkbox)
-                    .font(.caption)
+                    .font(Look.font(.caption))
             }
             if shown.isEmpty {
                 VStack {
@@ -576,16 +589,18 @@ struct ActivityView: View {
             }
             HStack {
                 if let log = run.logURL {
-                    Button("Show Log File") { NSWorkspace.shared.activateFileViewerSelecting([log]) }
+                    Button("Show Log File") { NSWorkspace.shared.activateFileViewerSelecting([log]) }.buttonStyle(LookButtonStyle())
                 }
                 Spacer()
-                Button("Export Shown…") { export(shown) }
+                Button("Export Shown…") { export(shown) }.buttonStyle(LookButtonStyle())
                     .disabled(shown.isEmpty)
                 Button("Done") { store.viewing = nil }
+                    .buttonStyle(LookButtonStyle(isDefault: true))
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
+        .lookWindow()
         .frame(minWidth: 760, minHeight: 480)
     }
 

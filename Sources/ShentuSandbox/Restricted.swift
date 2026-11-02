@@ -4,7 +4,7 @@ import Foundation
 /// on Shentu, with no learning. Everything is allowed except what is switched off here, and
 /// the sanity set (secrets, other apps' data, persistence) is always blocked.
 public struct RestrictedSandbox: Equatable, Sendable {
-    /// Internet and local-network connections. Local sockets (logging, DNS) always work.
+    /// Internet and local-network connections. Syslog always works; DNS (mDNSResponder) only when this is on.
     public var network = false
     /// Starting other programs, and having macOS open apps, documents or links. Bundled
     /// helpers can fork/exec; posix_spawn is blocked to prevent group changes.
