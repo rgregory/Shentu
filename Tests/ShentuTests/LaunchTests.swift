@@ -268,6 +268,29 @@ import Testing
         #expect(try output(try without("(deny appleevent-send)", shipped), "ae", finder) == open, "mutation: the deny is what blocks it")
     }
 
+    /// Mach services are a way out: Apple's `container` engine (com.apple.container.*) can mount
+    /// your home folder, third-party privileged helpers act as root. Oracle as in noAppleEvents:
+    /// a blocked lookup gives the same status as under a profile that never allowed mach*, which
+    /// differs from an unsandboxed lookup (the names needn't exist: the sandbox decides first).
+    @Test func onlyApplesMachServices() throws {
+        let shipped = try profile(LaunchChoice(network: true))
+        let allowed = "iokit* mach* network*"
+        try #require(shipped.contains(allowed), "mach* not where expected in the base allows")
+        let never = shipped.replacingOccurrences(of: allowed, with: "iokit* network*")
+        let open = "(version 1)(allow default)"
+        let thirdParty = "org.example.shentu-\(tag)", engine = "com.apple.container.apiserver"
+        let unsandboxed = try output(open, "mach", thirdParty)
+        let denied = try output(never, "mach", thirdParty)
+        try #require(unsandboxed != denied, "control: unsandboxed (\(unsandboxed)) must differ from never-allowed (\(denied))")
+        #expect(try output(shipped, "mach", thirdParty) == denied, "a third-party service is blocked")
+        #expect(try output(shipped, "mach", engine) == denied, "the container engine is blocked")
+        #expect(try output(shipped, "mach", "com.apple.cfprefsd.daemon") == "mach status 0", "control: Apple's services still work")
+        let rule = "(deny mach-lookup (require-not (global-name-prefix \"com.apple.\")))"
+        #expect(try output(try without(rule, shipped), "mach", thirdParty) == unsandboxed, "mutation: the rule is what blocks it")
+        #expect(try output(try without("(deny mach-lookup (global-name-prefix \"com.apple.container.\"))", shipped), "mach", engine)
+                != denied, "mutation: the container rule is what blocks the engine")
+    }
+
     /// The real launch path (log tap, temp folder, launch, cleanup): the app gets its own TMPDIR,
     /// can write there and nowhere else, and the folder is gone when it quits.
     @Test func launchMakesAndRemovesTheTempFolder() throws {
