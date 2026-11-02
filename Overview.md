@@ -1,6 +1,6 @@
 # Shentu
 
-Drop a Mac app on Shentu, choose what it can reach for this run, and it opens in a seatbelt sandbox.
+Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 
 ## What you choose
 
