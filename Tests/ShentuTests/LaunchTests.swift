@@ -27,7 +27,7 @@ import Testing
             try "x".write(toFile: "\(home)/\(f)", atomically: true, encoding: .utf8)
         }
         let source = try #require(Bundle.module.url(forResource: "shentuprobe", withExtension: "c", subdirectory: "Fixtures"))
-        #expect(sh("/usr/bin/cc", ["-o", app + "/Contents/MacOS/Dummy", source.path, "-framework", "CoreServices"]) == 0)
+        #expect(sh("/usr/bin/cc", ["-o", app + "/Contents/MacOS/Dummy", source.path]) == 0)
         let plist = ["CFBundleExecutable": "Dummy", "CFBundleIdentifier": bundleId, "CFBundleName": "Dummy",
                      "CFBundlePackageType": "APPL"]
         try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
@@ -233,7 +233,7 @@ import Testing
     /// A Unix-domain socket is a way out, not just a file: Docker's can start a container that
     /// mounts your home folder, ssh-agent's signs as you. Connecting is checked as
     /// network-outbound, so the file rules that close your home folder don't cover it, and
-    /// "network off" only denies (remote ip).
+    /// "network off" alone only denies (remote ip).
     @Test func unixSockets() throws {
         let outside = dir + "/u.sock", docker = home + "/.docker/run/docker.sock"
         let a = try unixListener(outside), b = try unixListener(docker)
@@ -246,6 +246,8 @@ import Testing
         #expect(try !can(off, "unix", outside), "network off: no Unix sockets")
         #expect(try !can(off, "unix", docker), "network off: not one in your home folder")
         #expect(try !can(try profile(LaunchChoice(network: true)), "unix", docker), "network on: still not one in your home folder")
+        #expect(try can(try without("(deny network-outbound (remote unix-socket))", off), "unix", docker),
+                "mutation: the rule is what blocks it")
     }
 
     /// Apple Events make another app act for this one, outside the sandbox (Terminal's
