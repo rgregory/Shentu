@@ -27,7 +27,7 @@ import Testing
             try "x".write(toFile: "\(home)/\(f)", atomically: true, encoding: .utf8)
         }
         let source = try #require(Bundle.module.url(forResource: "shentuprobe", withExtension: "c", subdirectory: "Fixtures"))
-        #expect(sh("/usr/bin/cc", ["-o", app + "/Contents/MacOS/Dummy", source.path]) == 0)
+        #expect(sh("/usr/bin/cc", ["-o", app + "/Contents/MacOS/Dummy", source.path, "-framework", "CoreServices"]) == 0)
         let plist = ["CFBundleExecutable": "Dummy", "CFBundleIdentifier": bundleId, "CFBundleName": "Dummy",
                      "CFBundlePackageType": "APPL"]
         try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
@@ -109,6 +109,52 @@ import Testing
         return profile.replacingOccurrences(of: rule, with: "")
     }
 
+    /// Runs probe steps under a profile and returns what the probe printed.
+    func output(_ profile: String, _ step: String...) throws -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", profile, app + "/Contents/MacOS/Dummy"] + step
+        p.environment = ["TMPDIR": scratch + "/"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        try p.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The pid of a running process with this exact name, if any.
+    func pid(of name: String) -> pid_t? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-x", name]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        guard (try? p.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").first.flatMap { pid_t($0) }
+    }
+
+    /// A listening Unix-domain socket at `path`; returns its fd.
+    func unixListener(_ path: String) throws -> Int32 {
+        try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        unlink(path)
+        var addr = sockaddr_un()
+        let bytes = Array(path.utf8)
+        try #require(bytes.count < MemoryLayout.size(ofValue: addr.sun_path), "socket path too long: \(path)")
+        addr.sun_family = sa_family_t(AF_UNIX)
+        addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        withUnsafeMutableBytes(of: &addr.sun_path) { $0.copyBytes(from: bytes) }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let rc = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        try #require(rc == 0, "bind \(path): errno \(errno)")
+        listen(fd, 4)
+        return fd
+    }
+
     /// A listening socket on localhost; returns (fd, port).
     func listener() -> (Int32, String) {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -182,6 +228,42 @@ import Testing
         #expect(try can(strict, "write", scratch + "/f"), "control: the app itself runs")
         #expect(try !can(strict, "exec"), "even with every option on, no other programs")
         #expect(try can(try without("(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid SYS_posix_spawn))", try without("(deny process-exec* (subpath \"/\"))", strict)), "exec"), "mutation: the rule is what blocks it")
+    }
+
+    /// A Unix-domain socket is a way out, not just a file: Docker's can start a container that
+    /// mounts your home folder, ssh-agent's signs as you. Connecting is checked as
+    /// network-outbound, so the file rules that close your home folder don't cover it, and
+    /// "network off" only denies (remote ip).
+    @Test func unixSockets() throws {
+        let outside = dir + "/u.sock", docker = home + "/.docker/run/docker.sock"
+        let a = try unixListener(outside), b = try unixListener(docker)
+        defer { close(a); close(b) }
+        let open = "(version 1)(allow default)"
+        #expect(try can(open, "unix", outside), "control: the socket accepts unsandboxed")
+        #expect(try can(open, "unix", docker), "control: the one in home too")
+        let off = try profile(LaunchChoice())
+        #expect(try can(off, "write", scratch + "/f"), "control: the app runs")
+        #expect(try !can(off, "unix", outside), "network off: no Unix sockets")
+        #expect(try !can(off, "unix", docker), "network off: not one in your home folder")
+        #expect(try !can(try profile(LaunchChoice(network: true)), "unix", docker), "network on: still not one in your home folder")
+    }
+
+    /// Apple Events make another app act for this one, outside the sandbox (Terminal's
+    /// `do script`, Finder copying files). The base allows appleevent-send and the sanity set
+    /// denies it with no filter; this checks the kernel honors that deny. Oracle: the shipped
+    /// profile gives the same status as one that never allowed Apple Events, and that differs
+    /// from an unsandboxed send. Finder gets an event it doesn't handle, with no consent prompt.
+    @Test func noAppleEvents() throws {
+        let finder = String(try #require(pid(of: "Finder"), "needs a logged-in session with Finder running"))
+        let shipped = try profile(LaunchChoice())
+        let allowed = "hid-control appleevent-send "
+        try #require(shipped.contains(allowed), "appleevent-send not where expected in the base allows")
+        let never = shipped.replacingOccurrences(of: allowed, with: "hid-control ")
+        let open = try output("(version 1)(allow default)", "ae", finder)
+        let denied = try output(never, "ae", finder)
+        try #require(open != denied, "control: unsandboxed (\(open)) must differ from never-allowed (\(denied)); if both are -1743, run `tccutil reset AppleEvents`")
+        #expect(try output(shipped, "ae", finder) == denied, "the shipped profile blocks Apple Events (unsandboxed: \(open), never allowed: \(denied))")
+        #expect(try output(try without("(deny appleevent-send)", shipped), "ae", finder) == open, "mutation: the deny is what blocks it")
     }
 
     /// The real launch path (log tap, temp folder, launch, cleanup): the app gets its own TMPDIR,
