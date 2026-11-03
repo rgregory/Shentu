@@ -1,2 +1,2 @@
 # Shentu
-Quick and Dirty Sandboxing for MacOS apps
+Aggressive Sandboxing for MacOS apps
