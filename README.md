@@ -26,11 +26,13 @@ Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 
 Apps in Apple's App Sandbox (most App Store apps) and Apple's own apps can't be wrapped: macOS won't put a second sandbox on a sandboxed app, and only launchd may start Apple's. Drop one on Shentu and it shows the restrictions the app already runs under, read from its code signature:
 
+<img src="docs/screenshots/confinement.png" width="600" alt="The sheet for Amphetamine: in the App Sandbox with the Hardened Runtime; network, files, devices, personal data and other, each with what it may do and what it can't; its container; secrets out of its reach; two other gaps">
+
 - App Sandbox and Hardened Runtime, on or off.
 - One row per area (Network, Files, Devices, Personal data, Other): what it may do (✓) and what its sandbox keeps from it (✕). For example: ✓ connect out, files you pick; ✕ the rest of your home folder, Downloads, camera, contacts.
 - Where it keeps its data: its container (`~/Library/Containers/<bundle ID>`), its app groups' containers, and any read & write exceptions. Click one to show it in Finder.
-- **Secrets** come first: whether it can read SSH keys, `.env` and key files, cloud and API credentials, password stores, shell history or browser sessions (the same set Shentu always blocks), and through what: no sandbox, the all-files entitlement, an exception over a folder that holds them, or Downloads. If nothing lets it, a green line says they're out of its reach.
-- **Gaps**: ways out of or around its own confinement. Some come from its signature: code injection it allows (`DYLD_` variables, libraries signed by others, or no Hardened Runtime at all), control of other apps, services and places it may reach through sandbox exceptions, other apps' settings, shared app-group folders, and private Apple entitlements. Two are left open by the App Sandbox itself, and Shentu closes both: opening links and other apps (a link can carry data out even without network access), and reading most of the system outside your home folder.
+- **Your secrets**: whether it can read SSH keys, `.env` and key files, cloud and API credentials, password stores, shell history or browser sessions (the same set Shentu always blocks), and through what: no sandbox, the all-files entitlement, an exception over a folder that holds them, or Downloads. If nothing lets it, a green line says they're out of its reach.
+- **Other gaps**: ways out of or around its own confinement, most serious first. Some come from its signature: code injection it allows (`DYLD_` variables, libraries signed by others, or no Hardened Runtime at all), control of other apps, services and places it may reach through sandbox exceptions, other apps' settings, shared app-group folders, and private Apple entitlements. Two are left open by the App Sandbox itself, and Shentu closes both: opening links and other apps (a link can carry data out even without network access), and reading most of the system outside your home folder.
 
 ## While it runs
 
