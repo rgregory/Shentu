@@ -93,7 +93,7 @@ struct LookCheckbox: ToggleStyle {
     }
 }
 
-/// Segmented control: one bordered strip with a hard shadow; the chosen segment is black.
+/// Segmented control: thin black outline; the chosen segment is black.
 struct LookSegmented<T: Hashable>: View {
     @Binding var selection: T
     /// (value, label) pairs, in order.
@@ -103,10 +103,10 @@ struct LookSegmented<T: Hashable>: View {
         HStack(spacing: 0) {
             ForEach(Array(options.enumerated()), id: \.offset) { i, o in
                 let on = o.0 == selection
-                if i > 0 { Rectangle().fill(Color.black).frame(width: 2) }
+                if i > 0 { Rectangle().fill(Color.black.opacity(0.35)).frame(width: 1) }
                 Button { selection = o.0 } label: {
                     Text(o.1)
-                        .font(Look.font(.callout).weight(on ? .semibold : .regular))
+                        .font(Look.font(.callout).weight(on ? .medium : .regular))
                         .lineLimit(1)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 3)
@@ -120,8 +120,6 @@ struct LookSegmented<T: Hashable>: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.black, lineWidth: 2))
-        .compositingGroup()
-        .shadow(color: .black, radius: 0, x: 2, y: 2)
+        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.black, lineWidth: 1))
     }
 }
