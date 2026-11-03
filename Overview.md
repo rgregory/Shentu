@@ -42,6 +42,15 @@ Each run shows where it is: Starting, Running, Quit, Quit with an error (the exi
 
 **Expect some apps to complain.** Helpers using `posix_spawn` are blocked because it can move a child outside the launch group; bundled helpers using fork/exec remain supported. `setsid` and `setpgid` are also blocked, so detached helpers cannot outlive cleanup. Mac apps ignore TMPDIR (NSTemporaryDirectory always returns the shared per-user folder), so an app's normal temp and cache writes are blocked.
 
+## Apps that are already sandboxed
+
+Apps in Apple's App Sandbox (most App Store apps) and Apple's own apps can't be wrapped: macOS won't put a second sandbox on a sandboxed app, and only launchd may start Apple's. Drop one on Shentu and it shows the restrictions the app already runs under, read from its code signature:
+
+- App Sandbox and Hardened Runtime, on or off.
+- One row per area (Network, Files, Devices, Personal data, Other): what it may do (✓) and what its sandbox keeps from it (✕). For example: ✓ connect out, files you pick; ✕ the rest of your home folder, Downloads, camera, contacts.
+- Where it keeps its data: its container (`~/Library/Containers/<bundle ID>`), its app groups' containers, and any read & write exceptions. Click one to show it in Finder.
+- Exceptions to its sandbox, Hardened Runtime protections it turns off (such as accepting `DYLD_` variables), and how many private Apple entitlements it has.
+
 ## How it works
 
 Everything Shentu needs is in this folder. `Sources/ShentuSandbox` builds the Seatbelt profiles, launches the app and keeps the deny log. `Sources/ShentuCore` maps the pop-up to a `RestrictedSandbox` (`Sources/ShentuCore/Launch.swift`) and calls `Enforce.runRestricted`.
