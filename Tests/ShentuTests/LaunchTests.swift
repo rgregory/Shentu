@@ -291,6 +291,50 @@ import Testing
                 != denied, "mutation: the container rule is what blocks the engine")
     }
 
+    /// Apps Shentu can't wrap are shown with their own restrictions, read from the signature.
+    @Test func ownConfinement() throws {
+        let c = Confinement.describe([
+            "com.apple.security.app-sandbox": true,
+            "com.apple.security.network.client": true,
+            "com.apple.security.network.server": false,
+            "com.apple.security.files.user-selected.read-write": true,
+            "com.apple.security.device.audio-input": true,
+            "com.apple.security.device.microphone": true,
+            "com.apple.security.temporary-exception.mach-lookup.global-name": ["com.example.helper"],
+            "com.apple.security.cs.allow-dyld-environment-variables": true,
+            "com.apple.security.application-groups": ["group.example"],
+            "com.apple.private.tcc.allow": ["kTCCServiceAll"],
+        ], hardenedRuntime: true)
+        #expect(c.sandboxed && c.hardenedRuntime)
+        let areas = Dictionary(uniqueKeysWithValues: c.areas.map { ($0.name, $0) })
+        #expect(c.areas.map(\.name) == ["Network", "Files", "Devices", "Personal data", "Other"])
+        #expect(areas["Network"]?.allowed == ["connect out"] && areas["Network"]?.denied == ["accept connections"])
+        #expect(areas["Files"]?.allowed == ["files you pick"])
+        #expect(areas["Files"]?.denied.first == "the rest of your home folder and other apps' data")
+        #expect(areas["Devices"]?.allowed == ["microphone"], "either microphone key, listed once")
+        #expect(areas["Devices"]?.denied.contains("camera") == true)
+        #expect(Confinement.describe(["com.apple.security.app-sandbox": true, "com.apple.security.files.downloads.read-only": true],
+                                     hardenedRuntime: false).areas.first { $0.name == "Files" }?.allowed == ["Downloads (read only)"])
+        let stores = Confinement.describe(["com.apple.security.app-sandbox": true,
+                                           "com.apple.security.application-groups": ["group.example"],
+                                           "com.apple.security.temporary-exception.files.home-relative-path.read-write": ["/.tool/"]],
+                                          hardenedRuntime: false, bundleId: "com.example.app").storage
+        #expect(stores == ["~/Library/Containers/com.example.app", "~/Library/Group Containers/group.example", "~/.tool/"])
+        #expect(Confinement.describe(["com.apple.security.network.server": true], hardenedRuntime: false).areas.isEmpty,
+                "not sandboxed: nothing is kept from it")
+        #expect(c.exceptions == ["mach-lookup.global-name: com.example.helper"])
+        #expect(c.relaxed == ["Accept DYLD_ environment variables (code injection)"])
+        #expect(c.groups == ["group.example"] && c.privateCount == 1)
+        #expect(Confinement.describe(["com.apple.security.cs.allow-jit": true], hardenedRuntime: false).relaxed.isEmpty,
+                "runtime exceptions mean nothing without the Hardened Runtime")
+
+        // A real one: TextEdit is Apple's and sandboxed, so it's shown, not wrapped.
+        let textEdit = try ResolvedTarget.resolve("/System/Applications/TextEdit.app")
+        #expect(textEdit.wrapStatus == .appleApp)
+        #expect(textEdit.confinement.sandboxed)
+        #expect(textEdit.confinement.areas.first { $0.name == "Files" }?.allowed.contains("files you pick") == true)
+    }
+
     /// The real launch path (log tap, temp folder, launch, cleanup): the app gets its own TMPDIR,
     /// can write there and nowhere else, and the folder is gone when it quits.
     @Test func launchMakesAndRemovesTheTempFolder() throws {

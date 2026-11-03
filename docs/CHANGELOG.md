@@ -2,7 +2,10 @@
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-03
+
 ### Added
+- Apps Shentu can't wrap (already in Apple's App Sandbox, or Apple's own) are shown with the restrictions their own signature gives them, instead of only a refusal: App Sandbox and Hardened Runtime on or off, what the entitlements let it do and what its sandbox keeps it from, sandbox exceptions, relaxed runtime protections, app groups, and a count of private Apple entitlements (`ownConfinement`).
 - Blocks you'd notice stand out: saves, opens and deletes of your files, connections and other programs are told apart from the app's background housekeeping (its caches, settings and temp areas). They show as full-height red spikes on the heart monitor, as a red "Blocked: create /path" line with how long ago on the run, and first in Activity, which hides background requests unless Show background is on (`notableBlocks`).
 - Heart monitor: each run shows blocked requests as a live EKG-style trace, spikes scrolling right to left with a per-second rate; the Activity window shows one lead per group (Files, Network, Programs, Services). Flat and grey once the app ends (`pulse`).
 - Output folder: one folder the app can read and change, so its work survives the run, with a warning that it can modify or delete anything there. Inside home or on a drive only; never home itself, a whole drive, ~/Library or a protected place, checked when picked and again at launch (`outputFolderKeepsItsWork`, `picksAreChecked`).
@@ -21,6 +24,9 @@
 - Stop ends the app's helpers too, and helpers no longer outlive the app: it runs in its own process group, which is signaled, plus helpers that left the group while their parent is in the run. Only stdin, stdout and stderr are passed to the app (`stopEndsHelpersToo`, `helpersEndWithTheApp`).
 
 ### Changed
+- The heart monitor is bigger and says more: spikes colored by group, the total split by group, peak rate, a time axis, the whole run once it ends, and a hover readout of each second's blocks.
+- The window opens at the size of the drop zone; it grows when the first app runs.
+- The version, build number and commit show under the drop zone (`-dirty` for a build with uncommitted changes).
 - The file checkboxes follow Finder's Kind menu: Archive, Document, Image, Movie, Music, PDF, Presentation, Text, in two columns. Hovering one shows its extensions. They're defined in `ShentuCore/Kinds.swift` by UTType conformance. Code, scripts and `.key`/`.ts` are never included (`kindsMatchFinder`).
 
 ### Removed

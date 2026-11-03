@@ -27,12 +27,28 @@ struct ShentuApp: App {
 
     var body: some Scene {
         WindowGroup("Shentu") {
+            // Just the drop zone until something runs (and no sheet is up, so a sheet can grow
+            // the window instead of being clipped): the content is then exactly its own
+            // height, and .contentSize holds the window to it, even over a taller size macOS
+            // saved from an earlier launch. The first run's list makes it at least 440 tall.
             MainView(store: store)
-                .frame(minWidth: 480, minHeight: 440)
+                .frame(minWidth: 480, minHeight: store.runs.isEmpty ? nil : 440)
+                .fixedSize(horizontal: false, vertical: store.runs.isEmpty && store.pending == nil && store.inspecting == nil)
                 .lookWindow()
                 .onAppear { delegate.store = store }
         }
+        .defaultSize(width: 480, height: 280)
+        .windowResizability(.contentSize)
     }
+}
+
+/// An app Shentu can't wrap (already in Apple's App Sandbox, or Apple's own), shown with the
+/// restrictions its own signature puts on it.
+struct Inspected: Identifiable {
+    let id = UUID()
+    let name: String
+    let problem: String
+    let confinement: Confinement
 }
 
 /// One app dropped and waiting for its options.
@@ -125,6 +141,8 @@ enum RunState: Equatable {
     var message: String?
     /// The run whose activity viewer is open.
     var viewing: Run?
+    /// An app that can't be wrapped, shown with its own restrictions.
+    var inspecting: Inspected?
 
     func dropped(_ urls: [URL]) {
         guard let url = urls.first(where: { $0.pathExtension == "app" }) else {
@@ -133,6 +151,16 @@ enum RunState: Equatable {
         }
         do {
             let target = try ResolvedTarget.resolve(url.path)
+            switch target.wrapStatus {
+            case .alreadySandboxed, .appleApp:
+                // Can't be wrapped, but its own signature says how it's confined: show that.
+                inspecting = Inspected(name: target.identity.name,
+                                       problem: target.wrapStatus.problem(name: target.identity.name) ?? "",
+                                       confinement: target.confinement)
+                return
+            case .wrappable, .unavailable:
+                break
+            }
             try target.preflight()
             let key = target.identity.key
             pending = Pending(path: url.path, name: target.identity.name, key: key,
@@ -238,12 +266,27 @@ enum RunState: Equatable {
 struct MainView: View {
     let store: Store
 
+    /// "Shentu 0.2.0 (build 61, a1b2c3d)" from the bundle's Info.plist (scripts/build-app.sh);
+    /// "Shentu (development)" when run with `swift run`.
+    static let version: String = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        guard let short = info["CFBundleShortVersionString"] as? String else { return "Shentu (development)" }
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        let commit = info["ShentuCommit"] as? String
+        return "Shentu \(short) (build \(build)\(commit.map { ", \($0)" } ?? ""))"
+    }()
+
     var body: some View {
         VStack(spacing: 16) {
-            DropZone(store: store)
-                .sheet(item: Binding(get: { store.pending }, set: { store.pending = $0 })) { item in
-                    OptionsView(store: store, item: item)
-                }
+            VStack(spacing: 6) {
+                DropZone(store: store)
+                Text(Self.version).font(.caption2).foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .textSelection(.enabled)
+            }
+            .sheet(item: Binding(get: { store.pending }, set: { store.pending = $0 })) { item in
+                OptionsView(store: store, item: item)
+            }
             if !store.runs.isEmpty {
                 List(store.runs) { RunRow(store: store, run: $0).listRowBackground(Look.panel) }
                     .listStyle(.plain)
@@ -255,7 +298,10 @@ struct MainView: View {
             }
         }
         .padding(20)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxHeight: store.runs.isEmpty ? nil : .infinity, alignment: .top)
+        .sheet(item: Binding(get: { store.inspecting }, set: { store.inspecting = $0 })) { item in
+            ConfinementView(store: store, item: item)
+        }
         .alert("Shentu", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) {
             Button("OK") {}
         } message: {
@@ -284,6 +330,98 @@ struct DropZone: View {
         .dropDestination(for: URL.self) { urls, _ in
             store.dropped(urls)
             return true
+        }
+    }
+}
+
+/// An app Shentu can't wrap: why, and the restrictions its own signature already gives it.
+struct ConfinementView: View {
+    let store: Store
+    let item: Inspected
+
+    var body: some View {
+        let c = item.confinement
+        VStack(alignment: .leading, spacing: 14) {
+            Text("\(item.name) can't run in Shentu").lookHeader()
+            Text(item.problem)
+                .font(Look.font(.caption)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Label(c.sandboxed ? "In Apple's App Sandbox" : "Not in Apple's App Sandbox: no restrictions of its own",
+                      systemImage: c.sandboxed ? "lock.fill" : "lock.open")
+                    .foregroundStyle(c.sandboxed ? Look.text : Color.orange)
+                Label(c.hardenedRuntime ? "Hardened Runtime" : "No Hardened Runtime",
+                      systemImage: c.hardenedRuntime ? "checkmark.shield" : "shield.slash")
+                    .foregroundStyle(c.hardenedRuntime ? Look.text : Color.orange)
+            }
+
+            if c.sandboxed {
+                // One row per area: what it may (✓) and what its sandbox keeps from it (✕).
+                Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 8) {
+                    ForEach(c.areas, id: \.name) { area in
+                        GridRow {
+                            Text(area.name).font(Look.font(.headline))
+                            VStack(alignment: .leading, spacing: 2) {
+                                if !area.allowed.isEmpty {
+                                    Text("✓  " + area.allowed.joined(separator: ", "))
+                                }
+                                if !area.denied.isEmpty {
+                                    Text("✕  " + area.denied.joined(separator: ", ")).foregroundStyle(.secondary)
+                                }
+                            }
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            section("Exceptions to its sandbox (these can reach past the list above):", c.exceptions, color: .orange)
+            section("Hardened Runtime protections it turns off:", c.relaxed, color: .orange)
+            if c.sandboxed {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Where it keeps its data:").font(Look.font(.headline))
+                    ForEach(c.storage, id: \.self) { path in
+                        let full = store.environment.expand(path)
+                        if FileManager.default.fileExists(atPath: full) {
+                            Button(path) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: full)]) }
+                                .buttonStyle(.link).help("Show in Finder")
+                        } else {
+                            Text(path + " (not created yet)").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else {
+                Label("Not sandboxed, so it can keep data anywhere you can write.", systemImage: "externaldrive")
+                    .foregroundStyle(.orange)
+            }
+            if c.privateCount > 0 {
+                Text("Plus \(c.privateCount) private Apple entitlement\(c.privateCount == 1 ? "" : "s"), which aren't documented.")
+                    .font(Look.font(.caption)).foregroundStyle(.secondary)
+            }
+            Text("From its code signature. Some of these also ask you first (camera, contacts, controlling other apps).")
+                .font(Look.font(.caption)).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Spacer()
+                Button("OK") { store.inspecting = nil }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(LookButtonStyle(isDefault: true))
+            }
+        }
+        .padding(20)
+        .frame(width: 600)
+        .lookWindow()
+    }
+
+    @ViewBuilder private func section(_ title: String, _ lines: [String], color: Color = Look.text) -> some View {
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(Look.font(.headline))
+                ForEach(lines, id: \.self) { line in
+                    Text("•  " + line).foregroundStyle(color).lineLimit(2).truncationMode(.middle).help(line)
+                }
+            }
         }
     }
 }
@@ -617,7 +755,7 @@ struct ActivityView: View {
 
 /// Blocked requests as a heart monitor: each lead is a trace scrolling right to left, with a
 /// spike for every quarter second that had blocks (taller for more, on a log scale). On the
-/// all-groups lead each spike takes the colour of the group that made most of it. A block
+/// all-groups lead each spike takes the color of the group that made most of it. A block
 /// you'd likely notice (a save, an open, a connection) is a full-height red spike with a
 /// marker. A time axis runs along the bottom; hovering shows that second's blocks by group
 /// and what you'd notice in it. Live while the app runs; once it ends the trace turns grey and
@@ -746,7 +884,7 @@ struct HeartMonitor: View {
                 }
                 pen = points[4]
             }
-            // Phosphor glow, then the line itself; on the all-groups lead, each spike again in its group's colour.
+            // Phosphor glow, then the line itself; on the all-groups lead, each spike again in its group's color.
             ctx.stroke(trace, with: .color(color.opacity(0.3)), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
             ctx.stroke(trace, with: .color(color), style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
             for (group, path) in tinted where group != .files {

@@ -25,6 +25,8 @@ public struct ResolvedTarget: Sendable {
     public var bundlePath: String?
     public var isAppleSigned: Bool
     public var hasAppSandbox: Bool
+    /// What its own signature says about its confinement.
+    public var confinement: Confinement
 
     public static func resolve(_ path: String) throws -> ResolvedTarget {
         let url = URL(fileURLWithPath: realPath(path))
@@ -54,14 +56,15 @@ public struct ResolvedTarget: Sendable {
             throw ShentuError.usage("not executable: \(executable)")
         }
 
-        let signing = SigningInfo.read(url)
+        let signing = SigningInfo.read(url, bundleId: bundleId)
         let identity = TargetIdentity(
             path: url.path, executable: executable, name: name, bundleId: bundleId,
             teamId: signing.teamId, signingId: signing.identifier, cdhash: signing.cdhash
         )
         return ResolvedTarget(
             identity: identity, bundlePath: bundlePath,
-            isAppleSigned: signing.isAppleAnchor, hasAppSandbox: signing.hasAppSandbox
+            isAppleSigned: signing.isAppleAnchor, hasAppSandbox: signing.hasAppSandbox,
+            confinement: signing.confinement
         )
     }
 
@@ -88,8 +91,9 @@ struct SigningInfo {
     var cdhash: String?
     var isAppleAnchor = false
     var hasAppSandbox = false
+    var confinement = Confinement()
 
-    static func read(_ url: URL) -> SigningInfo {
+    static func read(_ url: URL, bundleId: String? = nil) -> SigningInfo {
         var result = SigningInfo()
         var staticCode: SecStaticCode?
         guard SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode) == errSecSuccess,
@@ -104,9 +108,11 @@ struct SigningInfo {
             if let unique = info[kSecCodeInfoUnique as String] as? Data {
                 result.cdhash = unique.map { String(format: "%02x", $0) }.joined()
             }
-            if let ents = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any] {
-                result.hasAppSandbox = (ents["com.apple.security.app-sandbox"] as? Bool) == true
-            }
+            let ents = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
+            result.hasAppSandbox = (ents["com.apple.security.app-sandbox"] as? Bool) == true
+            // kSecCodeSignatureRuntime: signed with the Hardened Runtime.
+            let flags = (info[kSecCodeInfoFlags as String] as? NSNumber)?.uint32Value ?? 0
+            result.confinement = Confinement.describe(ents, hardenedRuntime: flags & 0x10000 != 0, bundleId: bundleId)
         }
 
         var requirement: SecRequirement?
