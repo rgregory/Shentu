@@ -5,6 +5,7 @@
 ## [0.2.0] — 2026-11-03
 
 ### Added
+- Gaps in an already-sandboxed app's own confinement, secrets first (SSH keys, .env and key files, credentials: whether anything lets it read them, and what): code injection its signature allows, control of other apps, sandbox exceptions (services, places, other apps' settings), shared app groups, private entitlements, and what the App Sandbox leaves open that Shentu closes (opening links and apps, reading the system outside home).
 - Apps Shentu can't wrap (already in Apple's App Sandbox, or Apple's own) are shown with the restrictions their own signature gives them, instead of only a refusal: App Sandbox and Hardened Runtime on or off, what the entitlements let it do and what its sandbox keeps it from, sandbox exceptions, relaxed runtime protections, app groups, and a count of private Apple entitlements (`ownConfinement`).
 - Blocks you'd notice stand out: saves, opens and deletes of your files, connections and other programs are told apart from the app's background housekeeping (its caches, settings and temp areas). They show as full-height red spikes on the heart monitor, as a red "Blocked: create /path" line with how long ago on the run, and first in Activity, which hides background requests unless Show background is on (`notableBlocks`).
 - Heart monitor: each run shows blocked requests as a live EKG-style trace, spikes scrolling right to left with a per-second rate; the Activity window shows one lead per group (Files, Network, Programs, Services). Flat and grey once the app ends (`pulse`).

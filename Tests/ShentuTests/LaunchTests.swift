@@ -315,6 +315,25 @@ import Testing
         #expect(areas["Devices"]?.denied.contains("camera") == true)
         #expect(Confinement.describe(["com.apple.security.app-sandbox": true, "com.apple.security.files.downloads.read-only": true],
                                      hardenedRuntime: false).areas.first { $0.name == "Files" }?.allowed == ["Downloads (read only)"])
+        let gaps = c.gaps.map(\.text)
+        #expect(gaps.contains("It accepts DYLD_ environment variables, so code can be injected into it at launch."))
+        #expect(gaps.contains("It may talk to services outside its sandbox: com.example.helper."))
+        #expect(gaps.contains { $0.hasPrefix("It can open links and other apps") }, "what the App Sandbox always leaves open")
+        #expect(c.gaps.map(\.severity) == c.gaps.map(\.severity).sorted(), "most serious first")
+        #expect(c.gaps.first { $0.text.hasPrefix("It accepts DYLD_") }?.severity == .high)
+        #expect(Confinement.describe([:], hardenedRuntime: true).secrets.first?.text.hasPrefix("It can read all of them") == true,
+                "not sandboxed: every secret is open")
+        #expect(c.secrets.isEmpty && c.secretsOnlyIfPicked, "files you pick: out of reach unless you pick one")
+        let homeOpen = Confinement.describe(["com.apple.security.app-sandbox": true,
+                                             "com.apple.security.temporary-exception.files.home-relative-path.read-only": ["/.config/"]],
+                                            hardenedRuntime: true)
+        #expect(homeOpen.secrets.first?.severity == .high && homeOpen.secrets.first?.text.contains("GitHub CLI token") == true,
+                "an exception over ~/.config names the secrets in it")
+        let projects = Confinement.describe(["com.apple.security.app-sandbox": true,
+                                             "com.apple.security.temporary-exception.files.home-relative-path.read-write": ["/Projects"]],
+                                            hardenedRuntime: true)
+        #expect(projects.secrets.contains { $0.severity == .medium && $0.text.contains(".env") && $0.text.contains("~/Projects") })
+        #expect(!c.gaps.contains { $0.text.contains(".env") }, "secrets aren't repeated among the other gaps")
         let stores = Confinement.describe(["com.apple.security.app-sandbox": true,
                                            "com.apple.security.application-groups": ["group.example"],
                                            "com.apple.security.temporary-exception.files.home-relative-path.read-write": ["/.tool/"]],

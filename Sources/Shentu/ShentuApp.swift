@@ -375,8 +375,6 @@ struct ConfinementView: View {
                     }
                 }
             }
-            section("Exceptions to its sandbox (these can reach past the list above):", c.exceptions, color: .orange)
-            section("Hardened Runtime protections it turns off:", c.relaxed, color: .orange)
             if c.sandboxed {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Where it keeps its data:").font(Look.font(.headline))
@@ -394,9 +392,29 @@ struct ConfinementView: View {
                 Label("Not sandboxed, so it can keep data anywhere you can write.", systemImage: "externaldrive")
                     .foregroundStyle(.orange)
             }
-            if c.privateCount > 0 {
-                Text("Plus \(c.privateCount) private Apple entitlement\(c.privateCount == 1 ? "" : "s"), which aren't documented.")
-                    .font(Look.font(.caption)).foregroundStyle(.secondary)
+            // Exceptions, runtime relaxations, app groups and private entitlements all show up
+            // here, as what they open up.
+            // Secrets on their own: one clear answer, then the gaps that remain.
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Your secrets (SSH keys, .env files, cloud credentials, password stores, shell history):")
+                    .font(Look.font(.headline)).fixedSize(horizontal: false, vertical: true)
+                if c.secrets.isEmpty {
+                    Label(c.secretsOnlyIfPicked ? "Out of its reach, unless you pick one yourself in an Open panel."
+                                                : "Out of its reach.", systemImage: "key.fill")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color(red: 0.1, green: 0.5, blue: 0.2))
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    gapList(c.secrets)
+                }
+            }
+            if !c.gaps.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Other gaps:").font(Look.font(.headline))
+                    // Dark text for contrast; the icon carries the severity, and the serious
+                    // ones are bold.
+                    gapList(c.gaps)
+                }
             }
             Text("From its code signature. Some of these also ask you first (camera, contacts, controlling other apps).")
                 .font(Look.font(.caption)).foregroundStyle(.tertiary)
@@ -414,12 +432,44 @@ struct ConfinementView: View {
         .lookWindow()
     }
 
-    @ViewBuilder private func section(_ title: String, _ lines: [String], color: Color = Look.text) -> some View {
+    /// Dark text for contrast; the icon carries the severity, and the serious ones are bold.
+    private func gapList(_ gaps: [Confinement.Gap]) -> some View {
+        ForEach(gaps, id: \.text) { gap in
+            Label {
+                Text(gap.text).fontWeight(gap.severity == .high ? .semibold : .regular)
+                    .foregroundStyle(gap.severity == .low ? Color.secondary : Look.text)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: Self.symbol(gap.severity)).foregroundStyle(Self.color(gap.severity))
+            }
+            .help(gap.text)
+        }
+    }
+
+    static func symbol(_ severity: Confinement.Gap.Severity) -> String {
+        switch severity {
+        case .high: return "exclamationmark.octagon.fill"
+        case .medium: return "exclamationmark.triangle.fill"
+        case .low: return "info.circle"
+        }
+    }
+
+    static func color(_ severity: Confinement.Gap.Severity) -> Color {
+        switch severity {
+        case .high: return Color(red: 0.78, green: 0.1, blue: 0.1)
+        case .medium: return Color(red: 0.85, green: 0.45, blue: 0)
+        case .low: return .secondary
+        }
+    }
+
+    @ViewBuilder private func section(_ title: String, _ lines: [String], color: Color = Look.text,
+                                      mark: String = "•") -> some View {
         if !lines.isEmpty {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(Look.font(.headline))
                 ForEach(lines, id: \.self) { line in
-                    Text("•  " + line).foregroundStyle(color).lineLimit(2).truncationMode(.middle).help(line)
+                    Text("\(mark)  " + line).foregroundStyle(color)
+                        .fixedSize(horizontal: false, vertical: true).help(line)
                 }
             }
         }
