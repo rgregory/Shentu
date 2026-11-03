@@ -96,8 +96,12 @@ enum RunState: Equatable {
     let outputFolder: String?
     let stop = StopHandle()
     var state = RunState.starting
+    let startedAt = Date()
     /// When it ended (or failed to start): the heart monitor freezes there.
     var endedAt: Date?
+    /// Where the pointer is over each heart monitor (the run's row, its activity viewer).
+    let rowHover = Hover()
+    let viewerHover = Hover()
     var activity = ActivityLog()
     var logURL: URL?
     /// nil until the run ends; false if blocked requests may be missing from the log.
@@ -451,8 +455,8 @@ struct RunRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            HeartMonitor(run: run, leads: [nil], span: 30)
-                .frame(height: 46)
+            HeartMonitor(run: run, leads: [nil], span: 30, hover: run.rowHover)
+                .frame(height: 104)
         }
         .padding(.vertical, 4)
     }
@@ -523,8 +527,8 @@ struct ActivityView: View {
                 Label(run.state.title, systemImage: run.state.symbol)
                     .font(Look.font(.caption)).foregroundStyle(run.state.color)
             }
-            HeartMonitor(run: run, leads: ActivityGroup.allCases.map { Optional($0) }, span: 60)
-                .frame(height: 150)
+            HeartMonitor(run: run, leads: ActivityGroup.allCases.map { Optional($0) }, span: 60, hover: run.viewerHover)
+                .frame(height: 240)
             if run.logComplete == false {
                 Label("Logging was incomplete: the system log dropped messages or the final check didn't arrive, so some blocked requests may be missing.",
                       systemImage: "exclamationmark.triangle")
@@ -605,28 +609,48 @@ struct ActivityView: View {
     }
 }
 
+/// Where the pointer is over a heart monitor, if it is. A class so the monitor can change it
+/// without @State (which needs a compiler plugin the Command Line Tools lack).
+@Observable final class Hover {
+    var x: CGFloat?
+}
+
 /// Blocked requests as a heart monitor: each lead is a trace scrolling right to left, with a
-/// spike for every quarter second that had blocks (taller for more, on a log scale). A block
+/// spike for every quarter second that had blocks (taller for more, on a log scale). On the
+/// all-groups lead each spike takes the colour of the group that made most of it. A block
 /// you'd likely notice (a save, an open, a connection) is a full-height red spike with a
-/// marker. Live while the app runs; flat and grey from the moment it ends.
+/// marker. A time axis runs along the bottom; hovering shows that second's blocks by group
+/// and what you'd notice in it. Live while the app runs; once it ends the trace turns grey and
+/// shows the whole run (up to the two minutes kept).
 struct HeartMonitor: View {
     let run: Run
     /// One trace each; nil is all groups together.
     let leads: [ActivityGroup?]
-    /// Seconds across the width.
+    /// Seconds across the width while the app runs.
     let span: TimeInterval
+    let hover: Hover
+
+    static let axisHeight: CGFloat = 14
+    static let font = Font.system(size: 10, weight: .medium).monospacedDigit()
 
     var body: some View {
         let active = run.state.isActive
         let endedAt = run.endedAt
+        let hoverX = hover.x
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active)) { timeline in
             let end = endedAt ?? timeline.date
             Canvas { context, size in
-                draw(&context, size: size, end: end, active: active)
+                draw(&context, size: size, end: end, active: active, hoverX: hoverX)
             }
         }
         .background(Color.black.opacity(0.9))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point): hover.x = point.x
+            case .ended: hover.x = nil
+            }
+        }
         .accessibilityElement()
         .accessibilityLabel("Blocked requests over time")
         .accessibilityValue("\(run.activity.pulse.rate(nil, at: run.endedAt ?? Date())) per second")
@@ -642,69 +666,92 @@ struct HeartMonitor: View {
         }
     }
 
-    private func draw(_ ctx: inout GraphicsContext, size: CGSize, end: Date, active: Bool) {
+    /// Seconds across the width: `span` while running; once ended, the whole run (at least 10 s,
+    /// at most what the pulse keeps).
+    private func window(end: Date, active: Bool) -> TimeInterval {
+        if active { return span }
+        let kept = Double(Pulse.keep) * Pulse.bucket
+        return min(max(end.timeIntervalSince(run.startedAt) + 1, 10), kept)
+    }
+
+    /// The group with the most blocks in bucket `i`.
+    private func dominant(_ i: Int64) -> ActivityGroup {
+        let pulse = run.activity.pulse
+        return ActivityGroup.allCases.max { pulse.count($0, i) < pulse.count($1, i) } ?? .files
+    }
+
+    private func draw(_ ctx: inout GraphicsContext, size: CGSize, end: Date, active: Bool, hoverX: CGFloat?) {
+        let plotHeight = size.height - Self.axisHeight
         // Monitor paper: a faint grid.
         var grid = Path()
         for x in stride(from: 0, through: size.width, by: 12) {
             grid.move(to: CGPoint(x: x, y: 0))
-            grid.addLine(to: CGPoint(x: x, y: size.height))
+            grid.addLine(to: CGPoint(x: x, y: plotHeight))
         }
-        for y in stride(from: 0, through: size.height, by: 12) {
+        for y in stride(from: 0, through: plotHeight, by: 12) {
             grid.move(to: CGPoint(x: 0, y: y))
             grid.addLine(to: CGPoint(x: size.width, y: y))
         }
         ctx.stroke(grid, with: .color(.green.opacity(0.07)), lineWidth: 0.5)
 
         let bucket = Pulse.bucket
+        let span = window(end: end, active: active)
         let endTime = end.timeIntervalSinceReferenceDate
         let startTime = endTime - span
         let first = Pulse.index(Date(timeIntervalSinceReferenceDate: startTime))
         let last = Pulse.index(end)
         let width = size.width * CGFloat(bucket / span)
-        let laneHeight = size.height / CGFloat(max(leads.count, 1))
+        let laneHeight = plotHeight / CGFloat(max(leads.count, 1))
         let pulse = run.activity.pulse
+        let alarm = active ? Color.red : Color.red.opacity(0.6)
 
         for (lane, lead) in leads.enumerated() {
             let top = CGFloat(lane) * laneHeight
-            let base = top + laneHeight * 0.66
-            let amplitude = laneHeight * 0.52
+            let base = top + laneHeight * 0.7
+            let amplitude = laneHeight * 0.5
             let color = Self.color(lead, active: active)
             var trace = Path()
             var alarms = Path()
+            var tinted: [ActivityGroup: Path] = [:]
             var markers: [CGPoint] = []
+            var peak = 0
             var pen = CGPoint(x: 0, y: base)
             trace.move(to: pen)
             for i in first...last {
                 let x = CGFloat((Double(i) * bucket - startTime) / span) * size.width
                 let count = pulse.count(lead, i)
-                if pulse.notable(lead, i) > 0 {
-                    // Full height, drawn again in red on top of the trace.
-                    let a = amplitude
-                    let points = [CGPoint(x: x, y: base), CGPoint(x: x + width * 0.2, y: base + a * 0.15),
-                                  CGPoint(x: x + width * 0.45, y: base - a), CGPoint(x: x + width * 0.7, y: base + a * 0.3),
-                                  CGPoint(x: x + width, y: base)]
-                    for p in points.dropFirst() { trace.addLine(to: p) }
+                peak = max(peak, count)
+                guard count > 0 else {
+                    pen = CGPoint(x: x + width, y: base)
+                    trace.addLine(to: pen)
+                    continue
+                }
+                // Q dip, R spike, S dip, back to baseline. 127 blocks a bucket fills the lane;
+                // a block you'd notice always does.
+                let notable = pulse.notable(lead, i) > 0
+                let a = notable ? amplitude : amplitude * CGFloat(min(1, log2(1 + Double(count)) / 7))
+                let points = [CGPoint(x: x, y: base), CGPoint(x: x + width * 0.2, y: base + a * 0.15),
+                              CGPoint(x: x + width * 0.45, y: base - a), CGPoint(x: x + width * 0.7, y: base + a * 0.3),
+                              CGPoint(x: x + width, y: base)]
+                for p in points.dropFirst() { trace.addLine(to: p) }
+                if notable {
                     alarms.move(to: points[0])
                     for p in points.dropFirst() { alarms.addLine(to: p) }
-                    markers.append(CGPoint(x: x + width * 0.45, y: base - a))
-                    pen = points[4]
-                } else if count == 0 {
-                    pen = CGPoint(x: x + width, y: base)
-                    trace.addLine(to: pen)
-                } else {
-                    // Q dip, R spike, S dip, back to baseline. 127 blocks a bucket fills the lane.
-                    let a = amplitude * CGFloat(min(1, log2(1 + Double(count)) / 7))
-                    trace.addLine(to: CGPoint(x: x + width * 0.2, y: base + a * 0.15))
-                    trace.addLine(to: CGPoint(x: x + width * 0.45, y: base - a))
-                    trace.addLine(to: CGPoint(x: x + width * 0.7, y: base + a * 0.3))
-                    pen = CGPoint(x: x + width, y: base)
-                    trace.addLine(to: pen)
+                    markers.append(points[2])
+                } else if lead == nil {
+                    var path = tinted[dominant(i), default: Path()]
+                    path.move(to: points[0])
+                    for p in points.dropFirst() { path.addLine(to: p) }
+                    tinted[dominant(i)] = path
                 }
+                pen = points[4]
             }
-            // Phosphor glow, then the line itself.
+            // Phosphor glow, then the line itself; on the all-groups lead, each spike again in its group's colour.
             ctx.stroke(trace, with: .color(color.opacity(0.3)), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
             ctx.stroke(trace, with: .color(color), style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
-            let alarm = active ? Color.red : Color.red.opacity(0.6)
+            for (group, path) in tinted where group != .files {
+                ctx.stroke(path, with: .color(Self.color(group, active: active)), style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+            }
             ctx.stroke(alarms, with: .color(alarm.opacity(0.35)), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
             ctx.stroke(alarms, with: .color(alarm), style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
             for m in markers {
@@ -716,17 +763,23 @@ struct HeartMonitor: View {
                 ctx.fill(Path(ellipseIn: dot), with: .color(color))
             }
 
-            let label = lead?.title ?? "Blocked"
-            let total = run.activity.total(lead)
-            let notable = run.activity.notableTotal(lead)
-            ctx.draw(Text("\(label)  \(total)").font(.system(size: 10, weight: .medium)).foregroundColor(color.opacity(0.85))
-                     + Text(notable > 0 ? "   \(notable) noticeable" : "").font(.system(size: 10, weight: .semibold)).foregroundColor(alarm),
-                     at: CGPoint(x: 8, y: top + 4), anchor: .topLeading)
-            if active {
-                ctx.draw(Text("\(pulse.rate(lead, at: end))/s").font(.system(size: 10, weight: .medium).monospacedDigit())
-                            .foregroundColor(color.opacity(0.85)),
-                         at: CGPoint(x: size.width - 8, y: top + 4), anchor: .topTrailing)
+            // Top left: totals, and on the all-groups lead the split by group.
+            var label = Text("\(lead?.title ?? "Blocked")  \(run.activity.total(lead))").foregroundColor(color.opacity(0.9))
+            if lead == nil {
+                for group in ActivityGroup.allCases where run.activity.total(group) > 0 {
+                    label = label + Text("   \(group.title) \(run.activity.total(group))")
+                        .foregroundColor(Self.color(group, active: active).opacity(0.85))
+                }
             }
+            let notable = run.activity.notableTotal(lead)
+            if notable > 0 { label = label + Text("   \(notable) noticeable").foregroundColor(alarm) }
+            ctx.draw(label.font(Self.font), at: CGPoint(x: 8, y: top + 4), anchor: .topLeading)
+
+            // Top right: blocks in the last second, and the busiest quarter second on screen.
+            let rate = active ? "\(pulse.rate(lead, at: end))/s   " : ""
+            let busiest = peak > 0 ? "peak \(peak * 4)/s" : ""
+            ctx.draw(Text(rate + busiest).font(Self.font).foregroundColor(color.opacity(0.85)),
+                     at: CGPoint(x: size.width - 8, y: top + 4), anchor: .topTrailing)
             if lane > 0 {
                 var divider = Path()
                 divider.move(to: CGPoint(x: 0, y: top))
@@ -734,5 +787,76 @@ struct HeartMonitor: View {
                 ctx.stroke(divider, with: .color(.white.opacity(0.08)), lineWidth: 1)
             }
         }
+
+        drawAxis(&ctx, size: size, span: span, startTime: startTime, active: active)
+        if let hoverX, hoverX >= 0, hoverX <= size.width {
+            drawHover(&ctx, size: size, x: hoverX, span: span, startTime: startTime, end: end, active: active)
+        }
+    }
+
+    /// Ticks along the bottom: seconds ago while running ("−20s … now"), seconds since launch
+    /// once it has ended ("0s … 14s").
+    private func drawAxis(_ ctx: inout GraphicsContext, size: CGSize, span: TimeInterval, startTime: TimeInterval, active: Bool) {
+        let y = size.height - Self.axisHeight
+        var line = Path()
+        line.move(to: CGPoint(x: 0, y: y))
+        line.addLine(to: CGPoint(x: size.width, y: y))
+        ctx.stroke(line, with: .color(.white.opacity(0.12)), lineWidth: 1)
+        let step: TimeInterval = span <= 15 ? 2 : span <= 40 ? 5 : span <= 80 ? 10 : 20
+        let launch = run.startedAt.timeIntervalSinceReferenceDate
+        let tick = Color.white.opacity(0.45)
+        var t: TimeInterval = 0
+        while t <= span + 0.001 {
+            let x = size.width * CGFloat(1 - t / span)
+            let text: String
+            if active { text = t == 0 ? "now" : "−\(Int(t))s" }
+            else { text = "\(max(0, Int((startTime + span - t - launch).rounded())))s" }
+            let anchor: UnitPoint = x > size.width - 20 ? .topTrailing : x < 20 ? .topLeading : .top
+            var mark = Path()
+            mark.move(to: CGPoint(x: x, y: y))
+            mark.addLine(to: CGPoint(x: x, y: y + 3))
+            ctx.stroke(mark, with: .color(tick), lineWidth: 1)
+            ctx.draw(Text(text).font(.system(size: 9).monospacedDigit()).foregroundColor(tick),
+                     at: CGPoint(x: min(max(x, 2), size.width - 2), y: y + 2), anchor: anchor)
+            t += step
+        }
+    }
+
+    /// A cursor and a label for the second under the pointer: when, blocks by group, and the
+    /// first thing you'd notice in it.
+    private func drawHover(_ ctx: inout GraphicsContext, size: CGSize, x: CGFloat, span: TimeInterval,
+                           startTime: TimeInterval, end: Date, active: Bool) {
+        let plotHeight = size.height - Self.axisHeight
+        var cursor = Path()
+        cursor.move(to: CGPoint(x: x, y: 0))
+        cursor.addLine(to: CGPoint(x: x, y: plotHeight))
+        ctx.stroke(cursor, with: .color(.white.opacity(0.5)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+        let t = startTime + Double(x / size.width) * span
+        let centre = Pulse.index(Date(timeIntervalSinceReferenceDate: t))
+        let buckets = (centre - 2)...(centre + 1)
+        let pulse = run.activity.pulse
+        let when = active ? "\(Int((end.timeIntervalSinceReferenceDate - t).rounded()))s ago"
+                          : "at \(max(0, Int((t - run.startedAt.timeIntervalSinceReferenceDate).rounded())))s"
+        var lines = [when]
+        let counts = ActivityGroup.allCases.map { g in (g, buckets.reduce(0) { $0 + pulse.count(g, $1) }) }.filter { $0.1 > 0 }
+        lines.append(counts.isEmpty ? "nothing blocked" : counts.map { "\($0.0.title) \($0.1)" }.joined(separator: " · "))
+        let moment = Date(timeIntervalSinceReferenceDate: t)
+        let noticed = run.activity.items.filter { $0.notable && $0.first <= moment.addingTimeInterval(0.6) && $0.last >= moment.addingTimeInterval(-0.6) }
+        if let item = noticed.first {
+            let sentence = item.sentence
+            lines.append("Blocked: " + (sentence.count > 60 ? String(sentence.prefix(28)) + "…" + String(sentence.suffix(31)) : sentence))
+            if noticed.count > 1 { lines.append("and \(noticed.count - 1) more you'd notice") }
+        }
+
+        let text = ctx.resolve(Text(lines.joined(separator: "\n")).font(Self.font).foregroundColor(.white))
+        let box = text.measure(in: CGSize(width: size.width - 16, height: plotHeight))
+        let pad: CGFloat = 5
+        let w = box.width + pad * 2, h = box.height + pad * 2
+        let left = x + 8 + w <= size.width ? x + 8 : x - 8 - w
+        let rect = CGRect(x: max(2, left), y: 4, width: w, height: min(h, plotHeight - 6))
+        ctx.fill(Path(roundedRect: rect, cornerRadius: 5), with: .color(.black.opacity(0.85)))
+        ctx.stroke(Path(roundedRect: rect, cornerRadius: 5), with: .color(.white.opacity(0.25)), lineWidth: 1)
+        ctx.draw(text, in: rect.insetBy(dx: pad, dy: pad))
     }
 }

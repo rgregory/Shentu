@@ -129,7 +129,7 @@ public struct ActivityItem: Identifiable, Equatable, Sendable {
 /// view. Keeps the last two minutes.
 public struct Pulse: Equatable, Sendable {
     public static let bucket: TimeInterval = 0.25
-    static let keep: Int64 = 480
+    public static let keep: Int64 = 480
     private var counts: [Int64: [ActivityGroup: Int]] = [:]
     private var notables: [Int64: [ActivityGroup: Int]] = [:]
     private var newest: Int64?
