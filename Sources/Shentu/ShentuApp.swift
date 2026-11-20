@@ -14,126 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main
-struct ShentuApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    private let store = Store()
-
-    init() {
-        // Also behave like a regular app when started as a bare executable (`swift run`).
-        NSApplication.shared.setActivationPolicy(.regular)
-        DispatchQueue.main.async { NSApplication.shared.activate(ignoringOtherApps: true) }
-    }
-
-    var body: some Scene {
-        WindowGroup("Shentu") {
-            // Just the drop zone until something runs (and no sheet is up, so a sheet can grow
-            // the window instead of being clipped): the content is then exactly its own
-            // height, and .contentSize holds the window to it, even over a taller size macOS
-            // saved from an earlier launch. The first run's list makes it at least 440 tall.
-            MainView(store: store)
-                .frame(minWidth: 480, minHeight: store.runs.isEmpty ? nil : 440)
-                .fixedSize(horizontal: false, vertical: store.runs.isEmpty && store.pending == nil && store.inspecting == nil)
-                .lookWindow()
-                .onAppear { delegate.store = store }
-        }
-        .defaultSize(width: 480, height: 280)
-        .windowResizability(.contentSize)
-    }
-}
-
-/// An app Shentu can't wrap (already in Apple's App Sandbox, or Apple's own), shown with the
-/// restrictions its own signature puts on it.
-struct Inspected: Identifiable {
-    let id = UUID()
-    let name: String
-    let problem: String
-    let confinement: Confinement
-}
-
-/// One app dropped and waiting for its options.
-struct Pending: Identifiable {
-    let id = UUID()
-    let path: String
-    let name: String
-    let key: String
-    var choice: LaunchChoice
-    /// Why the last file or folder picked can't be used.
-    var problem: String?
-}
-
-/// Where a run is.
-enum RunState: Equatable {
-    case starting
-    case running
-    case ended(RunEnd)
-    /// Never started: the profile didn't load, the app couldn't be resolved, a picked folder
-    /// was refused, …
-    case failed(String)
-
-    var title: String {
-        switch self {
-        case .starting: return "Starting…"
-        case .running: return "Running"
-        case .ended(let end): return end.title
-        case .failed(let why): return "Launch failed: \(why)"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .starting: return "hourglass"
-        case .running: return "circle.fill"
-        case .ended(.quit): return "checkmark.circle"
-        case .ended(.stopped): return "stop.circle"
-        case .ended: return "exclamationmark.triangle.fill"
-        case .failed: return "xmark.octagon.fill"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .starting: return .secondary
-        case .running: return .green
-        case .ended(let end): return end.isProblem ? .red : .secondary
-        case .failed: return .red
-        }
-    }
-
-    var isActive: Bool { self == .starting || self == .running }
-}
-
-/// One launch, running or finished. Only changed on the main thread (the launch thread hops
-/// there), hence unchecked.
-@Observable final class Run: Identifiable, @unchecked Sendable {
-    let id = UUID()
-    let name: String
-    let summary: String
-    let outputFolder: String?
-    let stop = StopHandle()
-    var state = RunState.starting
-    let startedAt = Date()
-    /// When it ended (or failed to start): the heart monitor freezes there.
-    var endedAt: Date?
-    /// Where the pointer is over each heart monitor (the run's row, its activity viewer).
-    let rowHover = Hover()
-    let viewerHover = Hover()
-    var activity = ActivityLog()
-    var logURL: URL?
-    /// nil until the run ends; false if blocked requests may be missing from the log.
-    var logComplete: Bool?
-    // The activity viewer's filter.
-    var search = ""
-    var group: ActivityGroup?
-    var showBackground = false
-
-    init(name: String, summary: String, outputFolder: String?) {
-        self.name = name
-        self.summary = summary
-        self.outputFolder = outputFolder
-    }
-}
-
 @Observable final class Store {
     let environment = Shentu.environment()
     var pending: Pending?
@@ -143,6 +23,9 @@ enum RunState: Equatable {
     var viewing: Run?
     /// An app that can't be wrapped, shown with its own restrictions.
     var inspecting: Inspected?
+    /// Whether the pop-up's Advanced section is open. Kept here, not in the Pending choice:
+    /// it is how the pop-up is being looked at, not part of what is remembered for the app.
+    var showAdvanced = false
 
     func dropped(_ urls: [URL]) {
         guard let url = urls.first(where: { $0.pathExtension == "app" }) else {
@@ -500,30 +383,21 @@ struct OptionsView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Internet and network", isOn: choice.network)
-                Text("Off blocks the internet, the local network and servers on this Mac (localhost), and it can't accept connections. Either way, it can't reach other apps' sockets, such as Docker's or ssh-agent's; only system logging is allowed.")
-                    .font(Look.font(.caption)).foregroundStyle(.secondary)
+                Text(stateText(networkCaption))
+                    .font(Look.font(.callout)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .help(networkHelp)
 
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Clipboard", isOn: choice.clipboard)
-                Text("Off means it can't read what you've copied or put anything on the clipboard, so copy and paste with other apps won't work.")
-                    .font(Look.font(.caption)).foregroundStyle(.secondary)
+                Text(stateText(clipboardCaption))
+                    .font(Look.font(.callout)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .help(clipboardHelp)
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Files it can open in your home folder and on drives:")
-                    Spacer()
-                    LookSegmented(selection: choice.mode,
-                                  options: LaunchChoice.Mode.allCases.map { ($0, $0.title) })
-                        .fixedSize()
-                }
-                if choice.wrappedValue.mode == .kinds { kinds } else { items }
-            }
-
-            outputFolder
+            advanced
 
             if let problem = current.problem {
                 Label(problem, systemImage: "xmark.octagon")
@@ -531,18 +405,13 @@ struct OptionsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Keep its isolated data between runs", isOn: choice.keepSettings)
-                Text("Uses a separate home folder. Shared macOS preferences stay blocked. Apps that ignore this folder cannot save settings.")
-                    .font(Look.font(.caption)).foregroundStyle(.secondary)
-            }
-
             Divider()
             VStack(alignment: .leading, spacing: 4) {
-                Label(choice.wrappedValue.outputFolder == nil && choice.wrappedValue.writableKinds.isEmpty
-                      ? "Saves files only to a temporary folder, deleted when it quits."
-                      : "Anything else it saves goes to a temporary folder, deleted when it quits.", systemImage: "trash")
-                Label("Can't start other programs or open links.", systemImage: "nosign")
+                fact("trash", choice.wrappedValue.outputFolder == nil && choice.wrappedValue.writableKinds.isEmpty
+                     ? "Saves files only to a temporary folder, deleted when it quits."
+                     : "Anything else it saves goes to a temporary folder, deleted when it quits.")
+                fact("powerplug", "It cannot reach other apps' sockets, such as Docker's or ssh-agent's; only the system log is open.")
+                fact("nosign", "It cannot start other programs or open links.")
             }
             .font(Look.font(.callout)).foregroundStyle(.secondary)
 
@@ -559,6 +428,133 @@ struct OptionsView: View {
         .padding(20)
         .frame(width: 480)
         .lookWindow()
+    }
+
+    /// One fact about the run, whatever the choices are. Not `Label`: the symbols are different
+    /// widths, so each row's text would start at a different place, and a wrapped label centres
+    /// its icon against both lines instead of the first.
+    private func fact(_ symbol: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: symbol).frame(width: 16, alignment: .center)
+            Text(stateText(text)).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// "can" in green, "can't" and "cannot" in red, both bold: the state is then readable at a
+    /// glance, without reading the sentence that carries it.
+    private func stateText(_ text: String) -> AttributedString {
+        var out = AttributedString()
+        for (i, word) in text.split(separator: " ", omittingEmptySubsequences: false).enumerated() {
+            if i > 0 { out += AttributedString(" ") }
+            var piece = AttributedString(String(word))
+            switch word.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".,;:()")) {
+            case "can":
+                piece.inlinePresentationIntent = .stronglyEmphasized
+                piece.foregroundColor = Look.allowed
+            case "can't", "cannot":
+                piece.inlinePresentationIntent = .stronglyEmphasized
+                piece.foregroundColor = Look.blocked
+            default:
+                break
+            }
+            out += piece
+        }
+        return out
+    }
+
+    /// Each caption says what is true right now, then what clicking will change. "Off means\u{2026}"
+    /// described the state the user was not in, so the current one had to be inferred backwards.
+    private var networkCaption: String {
+        choice.wrappedValue.network
+            ? "It can reach the internet and your network."
+            : "It cannot reach the internet or your network."
+    }
+
+    private var clipboardCaption: String {
+        choice.wrappedValue.clipboard
+            ? "It can read and change the clipboard."
+            : "It cannot read or change the clipboard."
+    }
+
+    private var keepSettingsCaption: String {
+        choice.wrappedValue.keepSettings
+            ? "It can save settings between runs."
+            : "It cannot save settings: every run starts fresh."
+    }
+
+    // The rest on hover: true whatever the toggle says, so it crowds the panel without
+    // telling the user where they stand.
+    private let networkHelp = "Servers on this Mac (localhost) count as your network. "
+        + "Either state leaves other apps' Unix-domain sockets blocked \u{2014} Docker's, ssh-agent's, "
+        + "any app with a socket in your home folder \u{2014} with only the system log open."
+    private let clipboardHelp = "Copying and pasting inside the app, and drag and drop, may not "
+        + "work either: they use the same service."
+    private let keepSettingsHelp = "A separate home folder, not your real one. Shared macOS "
+        + "preferences stay blocked either way, and apps that ignore the folder still can't save."
+
+    /// What the closed Advanced section is currently allowing, in one line, so that closing it
+    /// never hides a choice the user has made.
+    private var advancedSummary: String {
+        var parts: [String] = []
+        switch choice.wrappedValue.mode {
+        case .kinds:
+            let read = FileKind.allCases.filter { choice.wrappedValue.access($0) == .read }.map(\.title)
+            let written = choice.wrappedValue.writableKinds.map(\.title)
+            if read.isEmpty && written.isEmpty { parts.append("opens none of your files") }
+            if !read.isEmpty { parts.append("reads " + read.joined(separator: ", ")) }
+            if !written.isEmpty { parts.append("reads & writes " + written.joined(separator: ", ")) }
+        case .items:
+            let n = choice.wrappedValue.readPaths.count
+            parts.append(n == 0 ? "opens none of your files" : "opens \(n) item\(n == 1 ? "" : "s") you picked")
+        }
+        if let out = choice.wrappedValue.outputFolder { parts.append("writes to \(short(out))") }
+        if choice.wrappedValue.keepSettings { parts.append("keeps its data between runs") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// Files, the output folder and saved data. Closed by default: every one of them starts at
+    /// the safe answer, and an app is usually dropped here to be tried, not to be set up.
+    private var advanced: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button { store.showAdvanced.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: store.showAdvanced ? "chevron.down" : "chevron.right")
+                        .font(Look.font(.caption))
+                    Text("Advanced")
+                    if !store.showAdvanced {
+                        Text(advancedSummary)
+                            .font(Look.font(.caption)).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if store.showAdvanced {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Files it can open in your home folder and on drives:")
+                        Spacer()
+                        LookSegmented(selection: choice.mode,
+                                      options: LaunchChoice.Mode.allCases.map { ($0, $0.title) })
+                            .fixedSize()
+                    }
+                    if choice.wrappedValue.mode == .kinds { kinds } else { items }
+                }
+
+                outputFolder
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Keep its isolated data between runs", isOn: choice.keepSettings)
+                    Text(stateText(keepSettingsCaption))
+                        .font(Look.font(.callout)).foregroundStyle(.secondary)
+                }
+                .help(keepSettingsHelp)
+            }
+        }
     }
 
     /// Off / Read / Read & Write for each of Finder's kinds.

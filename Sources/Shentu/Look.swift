@@ -11,6 +11,10 @@ enum Look {
     static let text = Color.black
     static let accent = Color.black
     static let rule = Color.black.opacity(0.5)
+    /// Status colours keep their meaning: what the app can do, and what it can't. Darkened so
+    /// they stay legible on the off-white window.
+    static let allowed = Color(red: 0.0, green: 0.45, blue: 0.15)
+    static let blocked = Color(red: 0.70, green: 0.0, blue: 0.0)
 
     // System font throughout.
     static func font(size: CGFloat, weight: Font.Weight = .regular) -> Font { .system(size: size, weight: weight) }
