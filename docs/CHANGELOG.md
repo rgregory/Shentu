@@ -18,6 +18,7 @@
 
 ### Security
 - The app starts in a new session with no terminal, with /dev/null for stdin, stdout and stderr, and with a short fixed environment instead of Shentu's own (which, started from a shell, held that shell's exported tokens).
+- Remembered choices are keyed by the app's path and signer, not its bundle ID, so an app can't open with another app's choices filled in. Choices saved before this start again from the strict default.
 - Only Apple's Mach services, and not Apple's container engine (`com.apple.container.*`): the profile allowed every Mach lookup, so an app could drive a container engine over XPC (stopping containers, reading their environment, mounting your home folder) or a third-party privileged helper, with network off and Unix sockets closed. XPC services inside the app's own bundle still work (`onlyApplesMachServices`).
 - No Unix-domain sockets, whatever the network choice: connecting is a network operation, so neither the home-folder file rules nor "network off" (IP only) covered it, and an app could reach Docker's socket (and mount your home folder) or ssh-agent's. Only syslog stays open, plus mDNSResponder (DNS) when the network is on (`unixSockets`).
 - Saved data now uses a private home keyed by canonical app path, with no grants based on Info.plist names or IDs. Shentu control files and other isolated homes remain denied even under broad file-kind grants. Shared preference domains remain blocked.

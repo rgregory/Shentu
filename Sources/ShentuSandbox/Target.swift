@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -16,6 +17,14 @@ public struct TargetIdentity: Codable, Equatable, Sendable {
         let raw = bundleId ?? signingId ?? name
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
         return String(raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" })
+    }
+
+    /// Key for remembered choices: where the app is and who signed it, never the name or
+    /// bundle ID from its own Info.plist. An app calling itself another app's bundle ID must
+    /// not open with that app's choices already filled in.
+    public var choiceKey: String {
+        let text = [realPath(path), teamId ?? "", signingId ?? ""].joined(separator: "\n")
+        return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

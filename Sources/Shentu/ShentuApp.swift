@@ -162,7 +162,7 @@ enum RunState: Equatable {
                 break
             }
             try target.preflight()
-            let key = target.identity.key
+            let key = target.identity.choiceKey
             pending = Pending(path: url.path, name: target.identity.name, key: key,
                               choice: RememberedChoices(environment).choice(for: key))
         } catch {

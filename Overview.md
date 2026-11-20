@@ -35,7 +35,7 @@ Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 
 ## Runs and activity
 
-Your choices are remembered per app.
+Your choices are remembered per app, by where it is and who signed it, not by the name it gives itself.
 
 Each run shows where it is: Starting, Running, Quit, Quit with an error (the exit code), Crashed (the signal), Stopped, or Launch failed (why). If the system log dropped messages, the run says its logging was incomplete.
 
