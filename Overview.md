@@ -29,6 +29,7 @@ Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 - It can't start other programs or open links.
 - It can't connect to Unix-domain sockets (Docker's, ssh-agent's, other apps'), except the system log, and DNS when the network is on.
 - It can only reach Apple's system services (Mach/XPC), and not Apple's container engine: no third-party helpers or engines that could act outside the sandbox.
+- It gets a short fixed environment, no terminal, and no input or output streams.
 - A built-in sanity set (secrets, other apps' data, persistence) is always blocked.
 - Stop, or the app quitting, ends everything it started too.
 
