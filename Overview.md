@@ -8,6 +8,8 @@ Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 
 **Clipboard.** Off means it can't read what you've copied or put anything on the clipboard.
 
+**Advanced.** Closed until you open it: which of your files the app can open, the output folder, and whether it keeps its data between runs. Every one of them starts at its safest setting, and the closed heading says in one line what it currently allows, so a choice remembered from last time is never hidden.
+
 **Files it can open — by kind.** Archive, Document, Image, Movie, Music, PDF, Presentation and Text (Finder's Kind names), each set to Off, Read, or Read & Write. Hover a name for its extensions.
 
 - Read opens every file of that kind in your home folder and on drives (`/Volumes`).
@@ -37,6 +39,7 @@ Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 - It gets a short fixed environment, no terminal, and no input or output streams.
 - A built-in sanity set (secrets, other apps' data, persistence) is always blocked.
 - Stop, or the app quitting, ends everything it started too.
+- Quitting Shentu stops every run it is watching, and each run's temp folder goes with it.
 
 ## Runs and activity
 
