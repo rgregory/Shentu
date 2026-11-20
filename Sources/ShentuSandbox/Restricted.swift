@@ -29,10 +29,14 @@ public struct RestrictedSandbox: Equatable, Sendable {
     /// the app quits, instead of the shared temp folders. Mac apps ignore TMPDIR
     /// (NSTemporaryDirectory, reference row 21), so their usual temp writes are blocked.
     public var ephemeralTemp = false
+    /// Reading and changing the clipboard (the pasteboard service). Off: no copy and paste
+    /// with other apps.
+    public var clipboard = false
 
     public init(network: Bool = false, otherPrograms: Bool = false, ownData: Bool = true,
                 readWrite: [String] = [], readOnly: [String] = [], readFileTypes: [String] = [],
-                writeFileTypes: [String] = [], limitDrives: Bool = false, ephemeralTemp: Bool = false) {
+                writeFileTypes: [String] = [], limitDrives: Bool = false, ephemeralTemp: Bool = false,
+                clipboard: Bool = false) {
         self.network = network
         self.otherPrograms = otherPrograms
         self.ownData = ownData
@@ -42,6 +46,7 @@ public struct RestrictedSandbox: Equatable, Sendable {
         self.writeFileTypes = writeFileTypes
         self.limitDrives = limitDrives
         self.ephemeralTemp = ephemeralTemp
+        self.clipboard = clipboard
     }
 
     /// One-line summary for the profile's header and the run's output.
@@ -55,6 +60,7 @@ public struct RestrictedSandbox: Equatable, Sendable {
         if limitDrives { parts.append("drives limited") }
         if !otherPrograms { parts.append("no other programs") }
         if !ownData { parts.append("no saved data") }
+        if !clipboard { parts.append("no clipboard") }
         return parts.joined(separator: " · ")
     }
 
@@ -135,14 +141,16 @@ extension SBPLCompiler {
         if box.network { out.append("(allow network-outbound (literal \"/private/var/run/mDNSResponder\"))") }
         // Mach services are a way out too: a container engine's API (Apple's `container` runs as
         // com.apple.container.*) can mount your home folder, a third-party privileged helper
-        // acts as root. Only Apple's services stay reachable, minus the container engine.
-        // No XPC services at all: launchd starts them, so they don't inherit this profile. One
-        // shipped inside the app's own bundle would run unconfined, and WebKit's networking
-        // service would connect out with the network off.
-        out += ["", ";; Mach services: Apple's only, not the container engine; no XPC services",
+        // acts as root. Only Apple's services stay reachable, minus the container engine and
+        // the ones in `Hardening.serviceFilters`. No XPC services at all: launchd starts them, so
+        // they don't inherit this profile. One shipped inside the app's own bundle would run
+        // unconfined, and WebKit's networking service would connect out with the network off.
+        out += ["", ";; Mach services: Apple's only, minus the risky ones; no XPC services",
                 "(deny mach-lookup (require-not (global-name-prefix \"com.apple.\")))",
                 "(deny mach-lookup (global-name-prefix \"com.apple.container.\"))",
-                "(deny mach-lookup (xpc-service-name-prefix \"\"))"]
+                "(deny mach-lookup (xpc-service-name-prefix \"\"))",
+                statement("deny", ["mach-lookup"],
+                          Hardening.serviceFilters(network: box.network, clipboard: box.clipboard), report: false)]
         // Order: no writes anywhere, then temp; then nothing in home (whatever the earlier lines
         // allowed); then only your folders and the app's own. Allows use the same wildcard
         // `file-read*` as the sanity set's denies: a rule naming a specific operation
