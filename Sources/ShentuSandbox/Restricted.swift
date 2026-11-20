@@ -160,11 +160,14 @@ extension SBPLCompiler {
         // that holds every app's caches; the app's own are among its own folders.
         // With an ephemeral temp, the run's own folder replaces the shared ones.
         let temp = (box.ephemeralTemp ? [scratch.map(realPath)] : [environment.userTempDir, "/private/tmp"])
-            .compactMap { $0 } + ["/dev"]
+            .compactMap { $0 }
+        // Not /dev as a whole: your terminals (/dev/ttys*) are there, and you own them.
+        let devices = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/dtracehelper"]
+            .map { "(literal \(quote($0)))" }
         let closed = [home] + (box.limitDrives ? ["/Volumes"] : [])
         out += ["", ";; writes: only \(box.ephemeralTemp ? "this run's temp folder" : "temp folders") and your read & write folders",
                 "(deny file-write* (subpath \"/\"))",
-                statement("allow", ["file-write*"], subpaths(temp), report: false),
+                statement("allow", ["file-write*"], subpaths(temp) + devices, report: false),
                 ";; your home folder\(box.limitDrives ? " and drives" : ""): only the folders you chose\(box.ownData ? " and the app's own data" : "")",
                 statement("deny", ["file-read*", "file-write*"], subpaths(closed), report: false),
                 statement("allow", ["file-read-metadata"], subpaths(closed), report: false)]
@@ -215,6 +218,8 @@ extension SBPLCompiler {
             let exceptions = own.map { "(require-not (subpath \(quote($0))))" }.joined(separator: " ")
             out.append("(deny file-read* file-write* (require-all (subpath \(quote(path))) \(exceptions)))")
         }
+        // Terminals, serial ports and raw disks: reading a terminal takes what you type into it.
+        out.append("(deny file-read* file-write* (regex #\"^/dev/(tty|pty|cu[.]|disk|rdisk|bpf)\"))")
         out.append("(deny file-link (subpath \"/\"))")
         return out.joined(separator: "\n") + "\n"
     }
