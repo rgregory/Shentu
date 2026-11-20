@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- The pop-up is shorter. Internet and network and Clipboard stay in view; file kinds, "only these", the output folder and saved data move into an Advanced section, closed by default, which shows in one line what it currently allows so a remembered choice can't hide behind it.
+- Captions say what is true now rather than describing the state you are not in ("Off means it can't…"), with "can" in bold green and "cannot" in bold red. Detail that holds in both states is on hover, and what holds whatever you choose — the temporary folder, other apps' sockets, starting other programs — sits in the footer.
+
+### Fixed
+- Quitting Shentu ends every run it is supervising, and waits for them so each run's temp folder is removed. Before, the app kept running: still confined, but unwatched, with no Stop and its folder left behind. Shentu being killed rather than quit is still open (backlog item 18).
+
 ## [0.2.0] — 2026-11-03
 
 ### Added

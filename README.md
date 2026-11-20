@@ -6,11 +6,13 @@ Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 
 ## What you choose
 
-<img src="docs/screenshots/options.png" width="471" alt="The pop-up for berth: network, file kinds, output folder, isolated data">
+<img src="docs/screenshots/options.png" width="471" alt="The pop-up for berth: internet and network, clipboard, and a closed Advanced section">
 
 **Internet and network.** Off means no internet or local-network connections.
 
 **Clipboard.** Off means it can't read what you've copied or put anything on the clipboard.
+
+**Advanced.** Closed until you open it: which of your files the app can open, the output folder, and whether it keeps its data between runs. Every one of them starts at its safest setting, and the closed heading says in one line what it currently allows, so a choice remembered from last time is never hidden.
 
 **Files it can open — by kind.** Archive, Document, Image, Movie, Music, PDF, Presentation and Text (Finder's Kind names), each set to Off, Read, or Read & Write. Hover a name for its extensions.
 
