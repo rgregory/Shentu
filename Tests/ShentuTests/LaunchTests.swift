@@ -218,6 +218,22 @@ import Testing
                         "read", drive + "/notes.txt"), "mutation: the drives rule is what blocks it")
     }
 
+    @Test func symlinkedCredentialsStayProtected() throws {
+        let destination = home + "/Documents/cloud"
+        try FileManager.default.createDirectory(atPath: destination, withIntermediateDirectories: true)
+        let secret = destination + "/credentials.txt"
+        try "dummy credential".write(toFile: secret, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(atPath: home + "/.aws", withDestinationPath: destination)
+        let choice = LaunchChoice(mode: .items, readPaths: [home + "/Documents"])
+        let shipped = try profile(choice)
+        #expect(try can(shipped, "read", home + "/Documents/private.txt"), "control: the selected folder remains readable")
+        for path in [secret, home + "/.aws/credentials.txt"] {
+            #expect(try !can(shipped, "read", path), "credentials stay protected through either path")
+            let mutation = try without("\n    (subpath \"\(destination)\")", shipped)
+            #expect(try can(mutation, "read", path), "mutation: the canonical deny blocks the read")
+        }
+    }
+
     @Test func keepSettings() throws {
         let folder = env().isolatedHome(for: try ResolvedTarget.resolve(app).identity).path
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
@@ -350,6 +366,19 @@ import Testing
         #expect(c.groups == ["group.example"] && c.privateCount == 1)
         #expect(Confinement.describe(["com.apple.security.cs.allow-jit": true], hardenedRuntime: false).relaxed.isEmpty,
                 "runtime exceptions mean nothing without the Hardened Runtime")
+
+        for access in ["read-only", "read-write"] {
+            for path in [NSHomeDirectory() + "/.aws/", NSHomeDirectory() + "/Documents/", "/"] {
+                let absolute = Confinement.describe([
+                    "com.apple.security.app-sandbox": true,
+                    "com.apple.security.temporary-exception.files.absolute-path." + access: [path],
+                ], hardenedRuntime: true)
+                #expect(!absolute.secrets.isEmpty, "absolute exceptions must not claim secrets are out of reach")
+                if !path.contains("/Documents/") {
+                    #expect(absolute.secrets.contains { $0.severity == .high && $0.text.contains("AWS credentials") })
+                }
+            }
+        }
 
         // A real one: TextEdit is Apple's and sandboxed, so it's shown, not wrapped.
         let textEdit = try ResolvedTarget.resolve("/System/Applications/TextEdit.app")
@@ -567,6 +596,35 @@ import Testing
         #expect(Date().timeIntervalSince(start) < 30, "stopped, not waited out")
         let helper = try helperPID(pidfile)
         #expect(gone(helper), "the helper was stopped too")
+    }
+
+    @Test func stopEscalatesAndCleansUp() throws {
+        let out = home + "/Out"
+        try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
+        let pidfile = out + "/stubborn-helper.pid"
+        let stop = StopHandle()
+        var options = EnforceOptions(target: app)
+        options.arguments = ["ignore-term", "helper", pidfile, "sleep", "60"]
+        options.control = SessionControl(stop: stop)
+        options.onLaunch = { _ in
+            DispatchQueue.global().async {
+                // The marker is written after both processes inherit SIGTERM immunity.
+                for _ in 0..<100 {
+                    if FileManager.default.fileExists(atPath: pidfile) { break }
+                    usleep(50_000)
+                }
+                stop.stop()
+            }
+        }
+        let start = Date()
+        let summary = try Enforce.runRestricted(options, sandbox: RestrictedSandbox(readWrite: [out], ephemeralTemp: true),
+                                                environment: env())
+        #expect(summary.outcome.stoppedByShentu)
+        #expect(summary.outcome.wasSignaled && summary.outcome.status == SIGKILL)
+        #expect(Date().timeIntervalSince(start) < 30, "SIGTERM immunity must not prevent completion")
+        #expect(gone(try helperPID(pidfile)), "the stubborn helper was stopped too")
+        let temp = try #require(summary.tempFolder)
+        #expect(!FileManager.default.fileExists(atPath: temp), "completion includes temporary-folder cleanup")
     }
 
     /// Helpers don't outlive the app when it quits by itself.

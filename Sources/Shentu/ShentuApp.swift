@@ -22,18 +22,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !active.isEmpty else { return .terminateNow }
         active.forEach { $0.stop.stop() }
         // Hold the quit open while they end, so each run's own cleanup removes its temp folder.
-        // Capped, so a target that ignores the signal can't keep Shentu from quitting.
-        waitForRuns(store, sender: sender, until: Date().addingTimeInterval(5))
+        // Runner escalates to SIGKILL after five seconds. Wait for its completion and the
+        // session's log drain and cleanup rather than racing that escalation with a quit timer.
+        waitForRuns(store, sender: sender)
         return .terminateLater
     }
 
-    private func waitForRuns(_ store: Store, sender: NSApplication, until deadline: Date) {
+    private func waitForRuns(_ store: Store, sender: NSApplication) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            guard let self, store.runs.contains(where: { $0.state.isActive }), Date() < deadline else {
+            guard let self, store.runs.contains(where: { $0.state.isActive }) else {
                 sender.reply(toApplicationShouldTerminate: true)
                 return
             }
-            self.waitForRuns(store, sender: sender, until: deadline)
+            self.waitForRuns(store, sender: sender)
         }
     }
 }

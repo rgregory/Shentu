@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,8 @@ int main(int argc, char **argv) {
                 _exit(0);
             }
             report("helper", pid > 0);
+        } else if (!strcmp(step, "ignore-term")) {
+            signal(SIGTERM, SIG_IGN);
         } else if (!strcmp(step, "sleep") && i + 1 < argc) {
             sleep(atoi(argv[++i]));
         } else if (!strcmp(step, "crash")) {

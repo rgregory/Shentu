@@ -100,10 +100,17 @@ public struct Hardening: Sendable {
     /// claims as its own: its name and bundle ID come from its own Info.plist, so an app calling
     /// itself "Slack" must not get Slack's sessions.
     func rules() -> [SBPLRule] {
-        var rules = Self.entries.map { entry -> SBPLRule in
+        var rules = Self.entries.flatMap { entry -> [SBPLRule] in
             let operations = entry.protection == .readWrite ? ["file-read*", "file-write*"] : ["file-write*"]
-            let filter: SBPLFilter = entry.pattern.map { SBPLFilter.homePattern($0) } ?? .subpath(entry.path)
-            return SBPLRule(.deny, operations, filter)
+            if let pattern = entry.pattern {
+                return [SBPLRule(.deny, operations, .homePattern(pattern))]
+            }
+            let path = environment.expand(entry.path)
+            let canonical = realPath(path)
+            // Seatbelt checks the resolved destination. Keep the original path protected too,
+            // including when a protected location does not exist yet.
+            let paths = path == canonical ? [path] : [path, canonical]
+            return paths.map { SBPLRule(.deny, operations, .subpath($0)) }
         }
         rules.append(SBPLRule(.deny, ["appleevent-send"]))
         rules.append(SBPLRule(.deny, ["process-exec*"], .literal("/usr/bin/osascript")))

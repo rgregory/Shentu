@@ -106,14 +106,23 @@ public struct Confinement: Equatable, Sendable {
         if !c.sandboxed { return [Gap(severity: .high, text: "It can read all of them: \(everything). Nothing stops it.")] }
         if on("files.all") { return [Gap(severity: .high, text: "The all-files entitlement lets it read all of them: \(everything).")] }
         var gaps: [Gap] = []
-        // Places in home its exceptions open, as ~/x without a trailing slash ("~" for all of home).
-        let opened = (names("files.home-relative-path.read-only") + names("files.home-relative-path.read-write")).map { raw -> String in
-            var p = "~" + (raw.hasPrefix("/") ? raw : "/" + raw)
-            while p.hasSuffix("/") { p.removeLast() }
-            return p
+        // Compare every exception in the same absolute namespace, including exceptions for
+        // ancestors of home. Standardize dot components and preserve the filesystem root.
+        let home = NSHomeDirectory()
+        func normalized(_ path: String) -> String {
+            (path as NSString).standardizingPath
         }
-        for place in opened {
-            let named = secretEntries.filter { $0.pattern == nil && ($0.path.isWithin(place) || place.isWithin($0.path)) }.map(\.title)
+        let relative = (names("files.home-relative-path.read-only") + names("files.home-relative-path.read-write")).map {
+            normalized(home + ($0.hasPrefix("/") ? $0 : "/" + $0))
+        }
+        let absolute = (names("files.absolute-path.read-only") + names("files.absolute-path.read-write")).map(normalized)
+        for path in Array(Set(relative + absolute)).sorted() {
+            let place = path == home ? "~" : (path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path)
+            let named = secretEntries.filter {
+                guard $0.pattern == nil else { return false }
+                let secret = normalized($0.path == "~" ? home : ($0.path.hasPrefix("~/") ? home + $0.path.dropFirst(1) : $0.path))
+                return secret.isWithin(path) || path.isWithin(secret)
+            }.map(\.title)
             if !named.isEmpty {
                 gaps.append(Gap(severity: .high, text: "Its exception for \(place) lets it read \(named.joined(separator: ", "))."))
             } else {
