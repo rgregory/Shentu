@@ -43,9 +43,11 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
     public var writeKinds: [String] = []
     /// Keep a private home keyed by the app's canonical path. Shared preferences stay blocked.
     public var keepSettings = false
+    /// Reading and changing the clipboard.
+    public var clipboard = false
 
     public init(network: Bool = false, kinds: [FileKind] = [], writeKinds: [FileKind] = [], keepSettings: Bool = false,
-                mode: Mode = .kinds, readPaths: [String] = [], outputFolder: String? = nil) {
+                mode: Mode = .kinds, readPaths: [String] = [], outputFolder: String? = nil, clipboard: Bool = false) {
         self.network = network
         self.mode = mode
         self.readPaths = readPaths
@@ -53,6 +55,7 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
         self.writeKinds = writeKinds.map(\.rawValue)
         self.kinds = (kinds + writeKinds.filter { !kinds.contains($0) }).map(\.rawValue)
         self.keepSettings = keepSettings
+        self.clipboard = clipboard
     }
 
     /// Choices saved before a field existed load with that field's default.
@@ -65,6 +68,7 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
         mode = try c.decodeIfPresent(Mode.self, forKey: .mode) ?? .kinds
         readPaths = try c.decodeIfPresent([String].self, forKey: .readPaths) ?? []
         outputFolder = try c.decodeIfPresent(String.self, forKey: .outputFolder)
+        clipboard = try c.decodeIfPresent(Bool.self, forKey: .clipboard) ?? false
     }
 
     /// The readable kinds (writable ones included), in Finder's order. Names this version
@@ -101,7 +105,7 @@ public struct LaunchChoice: Codable, Equatable, Sendable {
                                  readOnly: byKind ? [] : readPaths,
                                  readFileTypes: byKind ? fileKinds.flatMap(\.extensions) : [],
                                  writeFileTypes: byKind ? writableKinds.flatMap(\.extensions) : [],
-                                 limitDrives: true, ephemeralTemp: true)
+                                 limitDrives: true, ephemeralTemp: true, clipboard: clipboard)
     }
 
     /// Why `path` can't be opened up, or nil if it can. Only things inside your home folder or

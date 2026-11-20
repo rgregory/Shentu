@@ -258,6 +258,7 @@ enum RunState: Equatable {
             parts.append(n == 0 ? "reads none of your files" : "reads \(n) item\(n == 1 ? "" : "s") you picked")
         }
         if let out = choice.outputFolder { parts.append("writes to \(environment.abbreviate(out))") }
+        if choice.clipboard { parts.append("clipboard") }
         parts.append(choice.keepSettings ? "keeps isolated data" : "no saved-data access")
         return parts.joined(separator: " · ")
     }
@@ -500,6 +501,13 @@ struct OptionsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Internet and network", isOn: choice.network)
                 Text("Off blocks the internet, the local network and servers on this Mac (localhost), and it can't accept connections. Either way, it can't reach other apps' sockets, such as Docker's or ssh-agent's; only system logging is allowed.")
+                    .font(Look.font(.caption)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Clipboard", isOn: choice.clipboard)
+                Text("Off means it can't read what you've copied or put anything on the clipboard, so copy and paste with other apps won't work.")
                     .font(Look.font(.caption)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

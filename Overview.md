@@ -6,6 +6,8 @@ Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 
 **Internet and network.** Off means no internet or local-network connections.
 
+**Clipboard.** Off means it can't read what you've copied or put anything on the clipboard.
+
 **Files it can open — by kind.** Archive, Document, Image, Movie, Music, PDF, Presentation and Text (Finder's Kind names), each set to Off, Read, or Read & Write. Hover a name for its extensions.
 
 - Read opens every file of that kind in your home folder and on drives (`/Volumes`).
