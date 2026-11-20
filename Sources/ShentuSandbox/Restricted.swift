@@ -29,10 +29,14 @@ public struct RestrictedSandbox: Equatable, Sendable {
     /// the app quits, instead of the shared temp folders. Mac apps ignore TMPDIR
     /// (NSTemporaryDirectory, reference row 21), so their usual temp writes are blocked.
     public var ephemeralTemp = false
+    /// Reading and changing the clipboard (the pasteboard service). Off: no copy and paste
+    /// with other apps.
+    public var clipboard = false
 
     public init(network: Bool = false, otherPrograms: Bool = false, ownData: Bool = true,
                 readWrite: [String] = [], readOnly: [String] = [], readFileTypes: [String] = [],
-                writeFileTypes: [String] = [], limitDrives: Bool = false, ephemeralTemp: Bool = false) {
+                writeFileTypes: [String] = [], limitDrives: Bool = false, ephemeralTemp: Bool = false,
+                clipboard: Bool = false) {
         self.network = network
         self.otherPrograms = otherPrograms
         self.ownData = ownData
@@ -42,6 +46,7 @@ public struct RestrictedSandbox: Equatable, Sendable {
         self.writeFileTypes = writeFileTypes
         self.limitDrives = limitDrives
         self.ephemeralTemp = ephemeralTemp
+        self.clipboard = clipboard
     }
 
     /// One-line summary for the profile's header and the run's output.
@@ -55,6 +60,7 @@ public struct RestrictedSandbox: Equatable, Sendable {
         if limitDrives { parts.append("drives limited") }
         if !otherPrograms { parts.append("no other programs") }
         if !ownData { parts.append("no saved data") }
+        if !clipboard { parts.append("no clipboard") }
         return parts.joined(separator: " · ")
     }
 
@@ -74,14 +80,18 @@ public struct RestrictedSandbox: Equatable, Sendable {
 }
 
 extension SBPLCompiler {
-    /// Operation families a normal app uses. Left out on purpose: boot-arg-set,
-    /// opendirectory-user-modify and fs-snapshot*; anything not listed is denied and logged.
+    /// Operation families a normal app uses. Left out on purpose, so they are denied and logged:
+    /// - job-creation: a job handed to launchd runs outside the sandbox.
+    /// - authorization-right-obtain: admin prompts and rights.
+    /// - signal: allowed below, but only to processes in this sandbox.
+    /// - hid-control (synthetic keyboard and mouse input), device* (camera, microphone), nvram*.
+    /// - boot-arg-set, opendirectory-user-modify and fs-snapshot*.
     static let restrictedBase = [
-        "file*", "ipc*", "iokit*", "mach*", "network*", "process*", "signal", "sysctl*", "system*",
-        "user-preference*", "nvram*", "job-creation", "lsopen", "pseudo-tty", "dynamic-code-generation",
-        "darwin-notification-post", "distributed-notification-post", "authorization-right-obtain",
-        "hid-control", "appleevent-send", "syscall*", "generic-issue-extension", "socket-ioctl",
-        "device*", "qtn-user",
+        "file*", "ipc*", "iokit*", "mach*", "network*", "process*", "sysctl*", "system*",
+        "user-preference*", "lsopen", "pseudo-tty", "dynamic-code-generation",
+        "darwin-notification-post", "distributed-notification-post",
+        "appleevent-send", "syscall*", "generic-issue-extension", "socket-ioctl",
+        "qtn-user",
     ]
 
     /// The Restricted Sandbox profile. Starts by allowing everything an app normally does, so any
@@ -113,6 +123,8 @@ extension SBPLCompiler {
             ";; everything an app normally does, as explicit allows: under (allow default) the kernel",
             ";; enforces the denies below but never logs them (tested), so nothing would show up.",
             "(allow \(Self.restrictedBase.joined(separator: " ")))",
+            ";; signals only inside this sandbox: not your other apps, not Shentu or its log reader",
+            "(allow signal (target same-sandbox))",
         ]
         if !box.network {
             out += ["", ";; no network",
@@ -129,12 +141,16 @@ extension SBPLCompiler {
         if box.network { out.append("(allow network-outbound (literal \"/private/var/run/mDNSResponder\"))") }
         // Mach services are a way out too: a container engine's API (Apple's `container` runs as
         // com.apple.container.*) can mount your home folder, a third-party privileged helper
-        // acts as root. Only Apple's services stay reachable, minus the container engine, plus
-        // XPC services inside the app's own bundle (by xpc-service-name, which only resolves there).
-        out += ["", ";; Mach services: Apple's only, not the container engine",
+        // acts as root. Only Apple's services stay reachable, minus the container engine and
+        // the ones in `Hardening.serviceFilters`. No XPC services at all: launchd starts them, so
+        // they don't inherit this profile. One shipped inside the app's own bundle would run
+        // unconfined, and WebKit's networking service would connect out with the network off.
+        out += ["", ";; Mach services: Apple's only, minus the risky ones; no XPC services",
                 "(deny mach-lookup (require-not (global-name-prefix \"com.apple.\")))",
                 "(deny mach-lookup (global-name-prefix \"com.apple.container.\"))",
-                "(allow mach-lookup (xpc-service-name-prefix \"\"))"]
+                "(deny mach-lookup (xpc-service-name-prefix \"\"))",
+                statement("deny", ["mach-lookup"],
+                          Hardening.serviceFilters(network: box.network, clipboard: box.clipboard), report: false)]
         // Order: no writes anywhere, then temp; then nothing in home (whatever the earlier lines
         // allowed); then only your folders and the app's own. Allows use the same wildcard
         // `file-read*` as the sanity set's denies: a rule naming a specific operation
@@ -144,20 +160,29 @@ extension SBPLCompiler {
         // that holds every app's caches; the app's own are among its own folders.
         // With an ephemeral temp, the run's own folder replaces the shared ones.
         let temp = (box.ephemeralTemp ? [scratch.map(realPath)] : [environment.userTempDir, "/private/tmp"])
-            .compactMap { $0 } + ["/dev"]
+            .compactMap { $0 }
+        // Not /dev as a whole: your terminals (/dev/ttys*) are there, and you own them.
+        let devices = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/dtracehelper"]
+            .map { "(literal \(quote($0)))" }
         let closed = [home] + (box.limitDrives ? ["/Volumes"] : [])
+        // Outside home but not the app's business: other accounts and /Users/Shared, and the
+        // temp folders every app shares, which hold other apps' files. The run's own temp
+        // folder is re-opened below.
+        let shared = ["/Users", "/private/tmp"] + (environment.userTempDir.map { [$0] } ?? [])
         out += ["", ";; writes: only \(box.ephemeralTemp ? "this run's temp folder" : "temp folders") and your read & write folders",
                 "(deny file-write* (subpath \"/\"))",
-                statement("allow", ["file-write*"], subpaths(temp), report: false),
+                statement("allow", ["file-write*"], subpaths(temp) + devices, report: false),
                 ";; your home folder\(box.limitDrives ? " and drives" : ""): only the folders you chose\(box.ownData ? " and the app's own data" : "")",
                 statement("deny", ["file-read*", "file-write*"], subpaths(closed), report: false),
-                statement("allow", ["file-read-metadata"], subpaths(closed), report: false)]
+                ";; other accounts and the shared temp folders",
+                statement("deny", ["file-read*"], subpaths(shared), report: false),
+                statement("allow", ["file-read-metadata"], subpaths(closed + shared), report: false)]
         if !(rw + own).isEmpty {
             out.append(statement("allow", ["file-write*"], subpaths(rw + own), report: false))
         }
         // Shared cfprefsd domains are not isolated by HOME or filesystem rules.
         out.append("(deny user-preference* (preference-domain-prefix \"\"))")
-        let readable = [t.path] + rw + ro + own + [home + "/Library/Fonts"]
+        let readable = [t.path] + rw + ro + own + temp + [home + "/Library/Fonts"]
         out.append(statement("allow", ["file-read*"], subpaths(readable), report: false))
         // Everything outside home and drives is readable already, so the regex needs no place.
         // Folders become listable too: without that, the app (and its own Open panel, which
@@ -199,6 +224,8 @@ extension SBPLCompiler {
             let exceptions = own.map { "(require-not (subpath \(quote($0))))" }.joined(separator: " ")
             out.append("(deny file-read* file-write* (require-all (subpath \(quote(path))) \(exceptions)))")
         }
+        // Terminals, serial ports and raw disks: reading a terminal takes what you type into it.
+        out.append("(deny file-read* file-write* (regex #\"^/dev/(tty|pty|cu[.]|disk|rdisk|bpf)\"))")
         out.append("(deny file-link (subpath \"/\"))")
         return out.joined(separator: "\n") + "\n"
     }

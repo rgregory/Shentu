@@ -109,6 +109,26 @@ public struct Hardening: Sendable {
         rules.append(SBPLRule(.deny, ["process-exec*"], .literal("/usr/bin/osascript")))
         return rules
     }
+
+    /// Apple services denied by name, as `mach-lookup` filters. The profile allows every
+    /// `com.apple.` service, so the ones that give a confined app leverage are taken back here:
+    /// - always: privileged helpers (smd), admin prompts (authd), package installs (installd),
+    ///   login and background items (persistence), screen recording (replayd), and Spotlight
+    ///   (a search over the names and contents of all your files);
+    /// - network off: DNS over Mach (lookups can carry data out) and the system's background
+    ///   transfer service (it connects for its caller);
+    /// - clipboard off: the pasteboard.
+    static func serviceFilters(network: Bool, clipboard: Bool) -> [String] {
+        var names = ["com.apple.xpc.smd", "com.apple.authd", "com.apple.installd",
+                     "com.apple.backgroundtaskmanagementagent", "com.apple.replayd"]
+        var prefixes = ["com.apple.metadata.mds"]
+        if !network {
+            names.append("com.apple.dnssd.service")
+            prefixes.append("com.apple.nsurlsessiond")
+        }
+        if !clipboard { prefixes.append("com.apple.pasteboard.") }
+        return names.map { "(global-name \"\($0)\")" } + prefixes.map { "(global-name-prefix \"\($0)\")" }
+    }
 }
 
 extension String {

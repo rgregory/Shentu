@@ -208,7 +208,11 @@ import Testing
         #expect(try !can(try profile(LaunchChoice()), "read", home + "/Movies/clip.mp4"), "nothing chosen, nothing read")
         let homeDeny = "(deny file-read* file-write*\n    (subpath \"\(home)\")"
         try #require(media.contains(homeDeny))
-        #expect(try can(media.replacingOccurrences(of: homeDeny, with: "(deny file-read* file-write*\n    (subpath \"/nonexistent\")"),
+        // The test home is under /private/tmp, which is closed as a shared place too.
+        let sharedTemp = "\n    (subpath \"/private/tmp\"))"
+        try #require(media.contains(sharedTemp))
+        #expect(try can(media.replacingOccurrences(of: homeDeny, with: "(deny file-read* file-write*\n    (subpath \"/nonexistent\")")
+                            .replacingOccurrences(of: sharedTemp, with: ")"),
                         "read", home + "/Documents/private.txt"), "mutation: the home rule is what blocks it")
         #expect(try can(try profile(LaunchChoice(kinds: [.movie])).replacingOccurrences(of: "(subpath \"/Volumes\")", with: "(subpath \"/nonexistent\")"),
                         "read", drive + "/notes.txt"), "mutation: the drives rule is what blocks it")
@@ -258,9 +262,9 @@ import Testing
     @Test func noAppleEvents() throws {
         let finder = String(try #require(pid(of: "Finder"), "needs a logged-in session with Finder running"))
         let shipped = try profile(LaunchChoice())
-        let allowed = "hid-control appleevent-send "
+        let allowed = "distributed-notification-post appleevent-send "
         try #require(shipped.contains(allowed), "appleevent-send not where expected in the base allows")
-        let never = shipped.replacingOccurrences(of: allowed, with: "hid-control ")
+        let never = shipped.replacingOccurrences(of: allowed, with: "distributed-notification-post ")
         let open = try output("(version 1)(allow default)", "ae", finder)
         let denied = try output(never, "ae", finder)
         try #require(open != denied, "control: unsandboxed (\(open)) must differ from never-allowed (\(denied)); if both are -1743, run `tccutil reset AppleEvents`")
@@ -352,6 +356,36 @@ import Testing
         #expect(textEdit.wrapStatus == .appleApp)
         #expect(textEdit.confinement.sandboxed)
         #expect(textEdit.confinement.areas.first { $0.name == "Files" }?.allowed.contains("files you pick") == true)
+    }
+
+    /// Closed for every app, whatever the options: ways to start something outside the
+    /// sandbox, the shared temp folders, and (unless chosen) the clipboard.
+    @Test func hardenedBase() throws {
+        let everything = try profile(LaunchChoice(network: true, kinds: FileKind.allCases, keepSettings: true, clipboard: true))
+        for gone in ["job-creation", "authorization-right-obtain", "hid-control", "nvram*", "device*",
+                     "(subpath \"/dev\")", "(allow mach-lookup (xpc-service-name-prefix"] {
+            #expect(!everything.contains(gone), "\(gone) is not in the profile")
+        }
+        #expect(everything.contains("(deny mach-lookup (xpc-service-name-prefix \"\"))"))
+        #expect(everything.contains("(allow signal (target same-sandbox))"))
+
+        let off = try profile(LaunchChoice())
+        let stray = dir + "/another-apps-temp.bin"
+        try "x".write(toFile: stray, atomically: true, encoding: .utf8)
+        #expect(try can(off, "write", scratch + "/f"), "control: the app runs")
+        #expect(try can(off, "read", scratch + "/f"), "control: it reads its own temp folder")
+        #expect(try !can(off, "read", stray), "the shared temp folder is closed")
+        let sharedTemp = "\n    (subpath \"/private/tmp\"))"
+        try #require(off.contains(sharedTemp))
+        #expect(try can(off.replacingOccurrences(of: sharedTemp, with: ")"), "read", stray), "mutation: the rule is what blocks it")
+
+        // Oracle as in onlyApplesMachServices: a blocked lookup answers like a third-party name.
+        let denied = try output(off, "mach", "org.example.shentu-\(tag)")
+        #expect(try output(off, "mach", "com.apple.pasteboard.1") == denied, "clipboard off")
+        #expect(try output(try profile(LaunchChoice(clipboard: true)), "mach", "com.apple.pasteboard.1") != denied, "clipboard on")
+        #expect(try output(off, "mach", "com.apple.dnssd.service") == denied, "network off: no DNS over Mach")
+        #expect(try output(try profile(LaunchChoice(network: true)), "mach", "com.apple.dnssd.service") != denied, "network on: DNS")
+        #expect(Runner.cleanEnvironment(["HOME": "/h", "GITHUB_TOKEN": "t", "LC_ALL": "C"]).keys.sorted() == ["HOME", "LC_ALL", "PATH"])
     }
 
     /// The real launch path (log tap, temp folder, launch, cleanup): the app gets its own TMPDIR,
@@ -608,7 +642,15 @@ import Testing
                                    onLaunch: { _ in started.add(true, nil) })
         #expect(RunEnd(ok.outcome) == .quit)
         #expect(started.all.count == 1, "onLaunch was called")
-        let failed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["write", dir + "/outside.txt"])
+        // A denied write is not always reported. After a cold start the kernel reports nothing
+        // for the first several runs and then reports every one: measured at six misses then
+        // four hits, the same on this tree and on cf124d7, so it is not the sandbox rules.
+        // LogTap keeps firing its canary until one lands for the same reason; do that here.
+        var failed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["write", dir + "/outside.txt"])
+        for _ in 0..<9 {
+            if failed.denials > 0 { break }
+            failed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["write", dir + "/outside.txt"])
+        }
         #expect(RunEnd(failed.outcome) == .exited(1))
         #expect(RunEnd(failed.outcome).isProblem)
         let crashed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["crash"])

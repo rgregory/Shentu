@@ -57,7 +57,7 @@ public enum Runner {
         public var stoppedByShentu: Bool
     }
 
-    /// Runs `executable` under `profile`, inheriting stdio, in a new process group led by the
+    /// Runs `executable` under `profile`, with no stdio, in a new session and process group led by the
     /// target. Everything the target starts is stopped with it: on a stop request, at the time
     /// limit, and when the target itself quits (helpers don't outlive the run, whose temp folder
     /// is deleted).
@@ -80,9 +80,7 @@ public enum Runner {
         tick: @escaping @Sendable () -> Void
     ) throws -> Outcome {
         let argv = command(profile: profile, executable: executable, arguments: arguments, launch: launch)
-        let environment = launch.environment.isEmpty
-            ? ProcessInfo.processInfo.environment
-            : ProcessInfo.processInfo.environment.merging(launch.environment) { $1 }
+        let environment = cleanEnvironment(ProcessInfo.processInfo.environment).merging(launch.environment) { $1 }
 
         let stopped = StopFlag()
         let queue = DispatchQueue(label: "shentu.runner")
@@ -142,16 +140,27 @@ public enum Runner {
         launch.wrapper + ["/usr/bin/sandbox-exec", "-f", profile.path] + launch.inner + [executable] + arguments
     }
 
-    /// posix_spawn into a new process group (so the whole group can be signaled), with default
-    /// signal handling and an empty signal mask, and only stdin/stdout/stderr inherited: none of
-    /// Shentu's other file descriptors leak into the sandbox.
+    /// The only variables the target gets from Shentu's own environment (plus `LC_*`). Started
+    /// from a shell, Shentu's environment holds whatever that shell exported, tokens included.
+    static let passedThrough: Set<String> = ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR", "__CF_USER_TEXT_ENCODING"]
+
+    static func cleanEnvironment(_ inherited: [String: String]) -> [String: String] {
+        var environment = inherited.filter { passedThrough.contains($0.key) || $0.key.hasPrefix("LC_") }
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        return environment
+    }
+
+    /// posix_spawn into a new session, which is also a new process group (so the whole group
+    /// can be signaled), with default signal handling and an empty signal mask. A new session
+    /// has no controlling terminal, and stdin/stdout/stderr are /dev/null: started from a shell,
+    /// Shentu must not hand the app your terminal. None of Shentu's file descriptors are passed.
     static func spawn(_ argv: [String], environment: [String: String]) throws -> pid_t {
         var attr: posix_spawnattr_t?
         posix_spawnattr_init(&attr)
         defer { posix_spawnattr_destroy(&attr) }
-        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF
+        let newSession: Int32 = 0x0400   // POSIX_SPAWN_SETSID
+        posix_spawnattr_setflags(&attr, Int16(newSession | POSIX_SPAWN_SETSIGDEF
                                               | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_CLOEXEC_DEFAULT))
-        posix_spawnattr_setpgroup(&attr, 0)
         var all = ~sigset_t(0)
         var none = sigset_t(0)
         posix_spawnattr_setsigdefault(&attr, &all)
@@ -160,7 +169,9 @@ public enum Runner {
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
-        for fd: Int32 in 0...2 { posix_spawn_file_actions_addinherit_np(&actions, fd) }
+        for fd: Int32 in 0...2 {
+            posix_spawn_file_actions_addopen(&actions, fd, "/dev/null", fd == 0 ? O_RDONLY : O_WRONLY, 0)
+        }
 
         let cArgs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
         let cEnv: [UnsafeMutablePointer<CChar>?] = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
