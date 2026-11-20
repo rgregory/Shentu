@@ -74,14 +74,18 @@ public struct RestrictedSandbox: Equatable, Sendable {
 }
 
 extension SBPLCompiler {
-    /// Operation families a normal app uses. Left out on purpose: boot-arg-set,
-    /// opendirectory-user-modify and fs-snapshot*; anything not listed is denied and logged.
+    /// Operation families a normal app uses. Left out on purpose, so they are denied and logged:
+    /// - job-creation: a job handed to launchd runs outside the sandbox.
+    /// - authorization-right-obtain: admin prompts and rights.
+    /// - signal: allowed below, but only to processes in this sandbox.
+    /// - hid-control (synthetic keyboard and mouse input), device* (camera, microphone), nvram*.
+    /// - boot-arg-set, opendirectory-user-modify and fs-snapshot*.
     static let restrictedBase = [
-        "file*", "ipc*", "iokit*", "mach*", "network*", "process*", "signal", "sysctl*", "system*",
-        "user-preference*", "nvram*", "job-creation", "lsopen", "pseudo-tty", "dynamic-code-generation",
-        "darwin-notification-post", "distributed-notification-post", "authorization-right-obtain",
-        "hid-control", "appleevent-send", "syscall*", "generic-issue-extension", "socket-ioctl",
-        "device*", "qtn-user",
+        "file*", "ipc*", "iokit*", "mach*", "network*", "process*", "sysctl*", "system*",
+        "user-preference*", "lsopen", "pseudo-tty", "dynamic-code-generation",
+        "darwin-notification-post", "distributed-notification-post",
+        "appleevent-send", "syscall*", "generic-issue-extension", "socket-ioctl",
+        "qtn-user",
     ]
 
     /// The Restricted Sandbox profile. Starts by allowing everything an app normally does, so any
@@ -113,6 +117,8 @@ extension SBPLCompiler {
             ";; everything an app normally does, as explicit allows: under (allow default) the kernel",
             ";; enforces the denies below but never logs them (tested), so nothing would show up.",
             "(allow \(Self.restrictedBase.joined(separator: " ")))",
+            ";; signals only inside this sandbox: not your other apps, not Shentu or its log reader",
+            "(allow signal (target same-sandbox))",
         ]
         if !box.network {
             out += ["", ";; no network",

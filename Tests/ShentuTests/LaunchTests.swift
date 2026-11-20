@@ -258,9 +258,9 @@ import Testing
     @Test func noAppleEvents() throws {
         let finder = String(try #require(pid(of: "Finder"), "needs a logged-in session with Finder running"))
         let shipped = try profile(LaunchChoice())
-        let allowed = "hid-control appleevent-send "
+        let allowed = "distributed-notification-post appleevent-send "
         try #require(shipped.contains(allowed), "appleevent-send not where expected in the base allows")
-        let never = shipped.replacingOccurrences(of: allowed, with: "hid-control ")
+        let never = shipped.replacingOccurrences(of: allowed, with: "distributed-notification-post ")
         let open = try output("(version 1)(allow default)", "ae", finder)
         let denied = try output(never, "ae", finder)
         try #require(open != denied, "control: unsandboxed (\(open)) must differ from never-allowed (\(denied)); if both are -1743, run `tccutil reset AppleEvents`")
