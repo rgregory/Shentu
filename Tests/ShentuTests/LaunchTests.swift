@@ -642,7 +642,15 @@ import Testing
                                    onLaunch: { _ in started.add(true, nil) })
         #expect(RunEnd(ok.outcome) == .quit)
         #expect(started.all.count == 1, "onLaunch was called")
-        let failed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["write", dir + "/outside.txt"])
+        // A denied write is not always reported. After a cold start the kernel reports nothing
+        // for the first several runs and then reports every one: measured at six misses then
+        // four hits, the same on this tree and on cf124d7, so it is not the sandbox rules.
+        // LogTap keeps firing its canary until one lands for the same reason; do that here.
+        var failed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["write", dir + "/outside.txt"])
+        for _ in 0..<9 {
+            if failed.denials > 0 { break }
+            failed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["write", dir + "/outside.txt"])
+        }
         #expect(RunEnd(failed.outcome) == .exited(1))
         #expect(RunEnd(failed.outcome).isProblem)
         let crashed = try Shentu.launch(app, LaunchChoice(), environment: env(), arguments: ["crash"])
