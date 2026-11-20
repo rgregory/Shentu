@@ -33,6 +33,7 @@ Drop a Mac app on Shentu and it opens in a strongly isolated (seatbelt) sandbox.
 - It can only reach Apple's system services (Mach), and not the container engine, privileged-helper and package installers, admin prompts, login and background items, screen recording or Spotlight. With the network off, also not DNS or the system's background transfer service.
 - No XPC services, its own included: macOS starts them outside the sandbox.
 - It can't start launchd jobs, signal processes outside the sandbox, post keyboard or mouse input, or use the camera or microphone.
+- Outside your home folder, other accounts, `/Users/Shared` and the temp folders all apps share are closed too. The rest of the system stays readable.
 - It gets a short fixed environment, no terminal, and no input or output streams.
 - A built-in sanity set (secrets, other apps' data, persistence) is always blocked.
 - Stop, or the app quitting, ends everything it started too.

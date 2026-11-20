@@ -21,6 +21,7 @@
 - Out of the base allows: `job-creation` (a launchd job runs outside the sandbox), `authorization-right-obtain`, `hid-control`, `device*` (camera, microphone) and `nvram*`. Signals only reach processes in the same sandbox, so the app can't stop your other apps, Shentu or its log reader.
 - More Apple services denied by name: privileged helpers (`com.apple.xpc.smd`), admin prompts (`authd`), package installs (`installd`), login and background items, screen recording (`replayd`) and Spotlight. With the network off, also DNS over Mach (`com.apple.dnssd.service`) and background transfers (`nsurlsessiond`).
 - Clipboard is a choice, off by default (`com.apple.pasteboard.*`).
+- Closed for reading: other accounts and `/Users/Shared`, `/private/tmp`, and the per-user temp folder all apps share. The run's own temp folder stays open.
 - `/dev` is no longer writable as a whole: only null, zero, random, urandom and dtracehelper. Terminals, serial ports and raw disks can't be read or written.
 - The app starts in a new session with no terminal, with /dev/null for stdin, stdout and stderr, and with a short fixed environment instead of Shentu's own (which, started from a shell, held that shell's exported tokens).
 - Remembered choices are keyed by the app's path and signer, not its bundle ID, so an app can't open with another app's choices filled in. Choices saved before this start again from the strict default.

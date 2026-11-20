@@ -165,18 +165,24 @@ extension SBPLCompiler {
         let devices = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/dtracehelper"]
             .map { "(literal \(quote($0)))" }
         let closed = [home] + (box.limitDrives ? ["/Volumes"] : [])
+        // Outside home but not the app's business: other accounts and /Users/Shared, and the
+        // temp folders every app shares, which hold other apps' files. The run's own temp
+        // folder is re-opened below.
+        let shared = ["/Users", "/private/tmp"] + (environment.userTempDir.map { [$0] } ?? [])
         out += ["", ";; writes: only \(box.ephemeralTemp ? "this run's temp folder" : "temp folders") and your read & write folders",
                 "(deny file-write* (subpath \"/\"))",
                 statement("allow", ["file-write*"], subpaths(temp) + devices, report: false),
                 ";; your home folder\(box.limitDrives ? " and drives" : ""): only the folders you chose\(box.ownData ? " and the app's own data" : "")",
                 statement("deny", ["file-read*", "file-write*"], subpaths(closed), report: false),
-                statement("allow", ["file-read-metadata"], subpaths(closed), report: false)]
+                ";; other accounts and the shared temp folders",
+                statement("deny", ["file-read*"], subpaths(shared), report: false),
+                statement("allow", ["file-read-metadata"], subpaths(closed + shared), report: false)]
         if !(rw + own).isEmpty {
             out.append(statement("allow", ["file-write*"], subpaths(rw + own), report: false))
         }
         // Shared cfprefsd domains are not isolated by HOME or filesystem rules.
         out.append("(deny user-preference* (preference-domain-prefix \"\"))")
-        let readable = [t.path] + rw + ro + own + [home + "/Library/Fonts"]
+        let readable = [t.path] + rw + ro + own + temp + [home + "/Library/Fonts"]
         out.append(statement("allow", ["file-read*"], subpaths(readable), report: false))
         // Everything outside home and drives is readable already, so the regex needs no place.
         // Folders become listable too: without that, the app (and its own Open panel, which
