@@ -17,6 +17,7 @@
 - Read & Write per file kind: each kind in the pop-up is Off, Read or Read & Write. Read & Write lets the app create, change, rename and delete files of that kind in your home folder and on drives, nowhere else, and never in the sanity set (`writesOnlyTheChosenKinds`). Remembered choices from before load unchanged.
 
 ### Security
+- No XPC services. The profile allowed every XPC service name, but launchd starts them, so they don't inherit the sandbox: a service shipped in the app's own bundle would run unconfined, and WebKit's networking service connects out with the network off. Apps that need one are blocked (`hardenedBase`).
 - Out of the base allows: `job-creation` (a launchd job runs outside the sandbox), `authorization-right-obtain`, `hid-control`, `device*` (camera, microphone) and `nvram*`. Signals only reach processes in the same sandbox, so the app can't stop your other apps, Shentu or its log reader.
 - The app starts in a new session with no terminal, with /dev/null for stdin, stdout and stderr, and with a short fixed environment instead of Shentu's own (which, started from a shell, held that shell's exported tokens).
 - Remembered choices are keyed by the app's path and signer, not its bundle ID, so an app can't open with another app's choices filled in. Choices saved before this start again from the strict default.

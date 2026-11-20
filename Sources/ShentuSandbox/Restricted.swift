@@ -135,12 +135,14 @@ extension SBPLCompiler {
         if box.network { out.append("(allow network-outbound (literal \"/private/var/run/mDNSResponder\"))") }
         // Mach services are a way out too: a container engine's API (Apple's `container` runs as
         // com.apple.container.*) can mount your home folder, a third-party privileged helper
-        // acts as root. Only Apple's services stay reachable, minus the container engine, plus
-        // XPC services inside the app's own bundle (by xpc-service-name, which only resolves there).
-        out += ["", ";; Mach services: Apple's only, not the container engine",
+        // acts as root. Only Apple's services stay reachable, minus the container engine.
+        // No XPC services at all: launchd starts them, so they don't inherit this profile. One
+        // shipped inside the app's own bundle would run unconfined, and WebKit's networking
+        // service would connect out with the network off.
+        out += ["", ";; Mach services: Apple's only, not the container engine; no XPC services",
                 "(deny mach-lookup (require-not (global-name-prefix \"com.apple.\")))",
                 "(deny mach-lookup (global-name-prefix \"com.apple.container.\"))",
-                "(allow mach-lookup (xpc-service-name-prefix \"\"))"]
+                "(deny mach-lookup (xpc-service-name-prefix \"\"))"]
         // Order: no writes anywhere, then temp; then nothing in home (whatever the earlier lines
         // allowed); then only your folders and the app's own. Allows use the same wildcard
         // `file-read*` as the sanity set's denies: a rule naming a specific operation
