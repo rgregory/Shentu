@@ -12,6 +12,150 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         store?.dropped(urls)
     }
+
+    /// Quitting Shentu ends every run it is supervising. Without this the app outlives Shentu:
+    /// still confined, since the profile is the kernel's, but with nothing watching it, no Stop
+    /// to reach for, and its temp folder never deleted.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let store else { return .terminateNow }
+        let active = store.runs.filter { $0.state.isActive }
+        guard !active.isEmpty else { return .terminateNow }
+        active.forEach { $0.stop.stop() }
+        // Hold the quit open while they end, so each run's own cleanup removes its temp folder.
+        // Capped, so a target that ignores the signal can't keep Shentu from quitting.
+        waitForRuns(store, sender: sender, until: Date().addingTimeInterval(5))
+        return .terminateLater
+    }
+
+    private func waitForRuns(_ store: Store, sender: NSApplication, until deadline: Date) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, store.runs.contains(where: { $0.state.isActive }), Date() < deadline else {
+                sender.reply(toApplicationShouldTerminate: true)
+                return
+            }
+            self.waitForRuns(store, sender: sender, until: deadline)
+        }
+    }
+}
+
+@main
+struct ShentuApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    private let store = Store()
+
+    init() {
+        // Also behave like a regular app when started as a bare executable (`swift run`).
+        NSApplication.shared.setActivationPolicy(.regular)
+        DispatchQueue.main.async { NSApplication.shared.activate(ignoringOtherApps: true) }
+    }
+
+    var body: some Scene {
+        WindowGroup("Shentu") {
+            // Just the drop zone until something runs (and no sheet is up, so a sheet can grow
+            // the window instead of being clipped): the content is then exactly its own
+            // height, and .contentSize holds the window to it, even over a taller size macOS
+            // saved from an earlier launch. The first run's list makes it at least 440 tall.
+            MainView(store: store)
+                .frame(minWidth: 480, minHeight: store.runs.isEmpty ? nil : 440)
+                .fixedSize(horizontal: false, vertical: store.runs.isEmpty && store.pending == nil && store.inspecting == nil)
+                .lookWindow()
+                .onAppear { delegate.store = store }
+        }
+        .defaultSize(width: 480, height: 280)
+        .windowResizability(.contentSize)
+    }
+}
+
+/// An app Shentu can't wrap (already in Apple's App Sandbox, or Apple's own), shown with the
+/// restrictions its own signature puts on it.
+struct Inspected: Identifiable {
+    let id = UUID()
+    let name: String
+    let problem: String
+    let confinement: Confinement
+}
+
+/// One app dropped and waiting for its options.
+struct Pending: Identifiable {
+    let id = UUID()
+    let path: String
+    let name: String
+    let key: String
+    var choice: LaunchChoice
+    /// Why the last file or folder picked can't be used.
+    var problem: String?
+}
+
+/// Where a run is.
+enum RunState: Equatable {
+    case starting
+    case running
+    case ended(RunEnd)
+    /// Never started: the profile didn't load, the app couldn't be resolved, a picked folder
+    /// was refused, …
+    case failed(String)
+
+    var title: String {
+        switch self {
+        case .starting: return "Starting…"
+        case .running: return "Running"
+        case .ended(let end): return end.title
+        case .failed(let why): return "Launch failed: \(why)"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .starting: return "hourglass"
+        case .running: return "circle.fill"
+        case .ended(.quit): return "checkmark.circle"
+        case .ended(.stopped): return "stop.circle"
+        case .ended: return "exclamationmark.triangle.fill"
+        case .failed: return "xmark.octagon.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .starting: return .secondary
+        case .running: return .green
+        case .ended(let end): return end.isProblem ? .red : .secondary
+        case .failed: return .red
+        }
+    }
+
+    var isActive: Bool { self == .starting || self == .running }
+}
+
+/// One launch, running or finished. Only changed on the main thread (the launch thread hops
+/// there), hence unchecked.
+@Observable final class Run: Identifiable, @unchecked Sendable {
+    let id = UUID()
+    let name: String
+    let summary: String
+    let outputFolder: String?
+    let stop = StopHandle()
+    var state = RunState.starting
+    let startedAt = Date()
+    /// When it ended (or failed to start): the heart monitor freezes there.
+    var endedAt: Date?
+    /// Where the pointer is over each heart monitor (the run's row, its activity viewer).
+    let rowHover = Hover()
+    let viewerHover = Hover()
+    var activity = ActivityLog()
+    var logURL: URL?
+    /// nil until the run ends; false if blocked requests may be missing from the log.
+    var logComplete: Bool?
+    // The activity viewer's filter.
+    var search = ""
+    var group: ActivityGroup?
+    var showBackground = false
+
+    init(name: String, summary: String, outputFolder: String?) {
+        self.name = name
+        self.summary = summary
+        self.outputFolder = outputFolder
+    }
 }
 
 @Observable final class Store {
